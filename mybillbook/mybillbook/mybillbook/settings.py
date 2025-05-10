@@ -1,3 +1,4 @@
+
 """
 Django settings for mybillbook project.
 
@@ -224,3 +225,17 @@ AUTHENTICATION_BACKENDS = (
 # TWILIO_AUTH_TOKEN = 'b80afcde566352cbb80cde58ba3ccb97'
 # TWILIO_VERIFY_SID = 'VAc06ae1fd0c30bcb7e2bfd9698b732310'
 # TWILIO_PHONE_NUMBER = '+19713912051'
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+}
