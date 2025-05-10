@@ -15,6 +15,8 @@ from .serializers import UserProfileSerializer,InviteStaffSerializer, VerifyStaf
 from .permissions import IsBusinessAdmin,generate_permissions,activate_subscription,IsSuperAdmin
 from .utils import get_current_business,has_subscription_feature,has_feature,has_permission,is_rate_limited,log_action
 from .models import INDIAN_STATES , BUSINESS_TYPES, INDUSTRY_TYPES, REGISTRATION_TYPES
+import logging
+
 
 class MeView(APIView):
     permission_classes = [IsAuthenticated]
@@ -86,7 +88,9 @@ class RequestOTPView(APIView):
         # Generate and cache OTP
         otp = str(random.randint(100000, 999999))
         cache.set(f'otp_{mobile}', otp, timeout=300)  # 5 minutes
-         print(f"[Mocked OTP] OTP for {mobile}: {otp}",flush=True)
+         # print(f"[Mocked OTP] OTP for {mobile}: {otp}",flush=True)
+        logger = logging.getLogger(__name__)
+        logger.info(f"[Mocked OTP] OTP for {mobile}: {otp}")
 
         # Initialize all flags
         user_exists = False
