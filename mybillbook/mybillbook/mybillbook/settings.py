@@ -25,12 +25,14 @@ SECRET_KEY = 'django-insecure-r6x2zy+0^n%88f!*c$3c)o@)-zr$(958+qj^yf&cksm!z%gljd
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['192.168.1.37','192.168.1.7','192.168.1.40', '192.168.1.3', '192.168.1.35','192.168.1.43', 'localhost', '127.0.0.1','testserver']
+ALLOWED_HOSTS = ['192.168.1.37','192.168.1.7','192.168.1.40', '192.168.1.3', '192.168.1.35','192.168.1.43', 'localhost', '127.0.0.1','testserver','backend-3-2y61.onrender.com']
+
 
 
 # Application definition
 
 INSTALLED_APPS = [
+    'whitenoise.runserver_nostatic',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
