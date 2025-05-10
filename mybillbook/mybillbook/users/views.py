@@ -86,7 +86,7 @@ class RequestOTPView(APIView):
         # Generate and cache OTP
         otp = str(random.randint(100000, 999999))
         cache.set(f'otp_{mobile}', otp, timeout=300)  # 5 minutes
-        print(f"[Mocked OTP] OTP for {mobile}: {otp}")
+         print(f"[Mocked OTP] OTP for {mobile}: {otp}",flush=True)
 
         # Initialize all flags
         user_exists = False
