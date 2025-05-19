@@ -347,6 +347,8 @@ class Invoice(models.Model):
     def delete(self, *args, **kwargs):
         # Handle necessary clean up before deleting the invoice or invoice item
         self.reverse_previous_balance_impact()  # Example: Reverse balance impact for the party
+        for item in self.invoice_items.all():
+            item.delete()
         super().delete(*args, **kwargs)
 
     def make_payment(self, total_payment_amount, bank_account=None):
@@ -628,19 +630,7 @@ class InvoiceItem(models.Model):
     def get_available_stock(self):
         """Returns the remaining stock for products. For services, stock is not managed."""
         if self.item:
-            # Create a unique cache key for each item
-            cache_key = f'item_{self.item.id}_stock_{self.quantity}'  # Include quantity in the key to handle dynamic changes
-            available_stock = cache.get(cache_key)  # Check if the result is cached
-            if available_stock is None:  # Cache miss - calculate available stock
-                if self.item.closingStock >= self.quantity:
-                    available_stock = self.item.closingStock - self.quantity
-                else:
-                    available_stock = 0  # Out-of-stock for products
-                # Store the result in cache for 15 minutes (adjustable)
-                cache.set(cache_key, available_stock)
-            if available_stock <= 0:
-                raise ValidationError(f"Not enough stock for {self.item.itemName}. Available stock: {self.item.closingStock}")
-            return available_stock
+            return self.item.closingStock
         return None  # Services don't have stock management
 
     def save(self, *args, **kwargs):
@@ -649,19 +639,7 @@ class InvoiceItem(models.Model):
         if self.item:
             self.unit_price = self.item.salesPrice  # For products
             self.price_item = self.item.salesPrice  # Price of item before tax
-            # Check if sufficient stock is available and update
-            available_stock = self.get_available_stock()
-            if available_stock >= 0:
-                self.item.closingStock = available_stock
-                self.item.save()  # Persist the updated stock to the database
-                # Invalidate the cache for this item
-                cache_key = f'item_{self.item.id}_stock'
-                cache.delete(cache_key)  # Clear the old cached value
-                # Optionally, you could also update the cache with the new stock value
-                cache.set(cache_key, self.item.closingStock)
-            else:
-                raise ValidationError("Not enough stock available.")
-            
+            # Stock management is now handled by the serializer
         elif self.service:
             self.unit_price = self.service.salesPrice  # For services
             self.price_item = self.service.salesPrice  # Service price before tax
@@ -669,6 +647,14 @@ class InvoiceItem(models.Model):
 
         super().save(*args, **kwargs)
 
+    def delete(self, *args, **kwargs):
+        # Handle necessary clean up before deleting the invoice or invoice item
+        print("""Reverse stock when item is deleted 1.""")
+        item = self.item
+        if item:
+            item.closingStock += self.quantity
+            item.save()
+        super().delete(*args, **kwargs)
 
     def __str__(self):
         if self.item:
