@@ -21,7 +21,13 @@ from users.utils import get_current_business, log_action
 from .permissions import HasPurchasePermission
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import serializers
-
+from .email_utils import send_purchase_email, send_purchasereturn_email,send_debitnote_email,send_purchase_order_email,send_payment_out_email
+import tempfile
+import os
+import base64
+from django.core.validators import validate_email
+from users.models import Business
+from parties.models import Party
 
 # Create your views here.
 @api_view(['POST'])
@@ -165,14 +171,24 @@ class PurchaseListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
         return Purchase.objects.filter(business=get_current_business(self.request.user))
 
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+
     def perform_create(self, serializer):
         business = get_current_business(self.request.user)
-        # Get the next invoice number
-        next_invoice_no = Purchase.get_next_purchase_number(business)
-        instance = serializer.save(business=business,purchase_no=next_invoice_no)
-        log_action(self.request.user, business, "purchase_created", {"purchase_id": instance.id})
+        # Get the next purchase number
+        next_purchase_no = Purchase.get_next_purchase_number(business)
+        # Save the instance with the next purchase number
+        instance = serializer.save(business=business, purchase_no=next_purchase_no)
+        log_action(self.request.user, business, "purchase_created", {
+            "purchase_id": instance.id,
+            "purchase_number": instance.purchase_no,
+            "amount": float(instance.total_amount) if instance.total_amount else None
+        })
         return instance
-    
+
 
 class PurchaseDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = PurchaseSerializer
@@ -183,10 +199,18 @@ class PurchaseDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def perform_update(self, serializer):
         instance = serializer.save()
-        log_action(self.request.user, instance.business, "purchase_updated", {"purchase_id": instance.id})
+        log_action(self.request.user, instance.business, "purchase_updated", {
+            "purchase_id": instance.id,
+            "purchase_number": instance.purchase_no,
+            "amount": float(instance.total_amount) if instance.total_amount else None
+        })
 
     def perform_destroy(self, instance):
-        log_action(self.request.user, instance.business, "purchase_deleted", {"purchase_id": instance.id})
+        log_action(self.request.user, instance.business, "purchase_deleted", {
+            "purchase_id": instance.id,
+            "purchase_number": instance.purchase_no,
+            "amount": float(instance.total_amount) if instance.total_amount else None
+        })
         instance.delete()
 
 
@@ -387,3 +411,254 @@ def get_next_purchase_order_number(request):
     business = get_current_business(request.user)
     next_invoice_number = PurchaseOrder.get_next_purchase_order_number(business)
     return Response({'next_purchase_order_number': next_invoice_number})
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_purchase_email_view(request):
+    try:
+        purchase_no = request.data.get('purchase_no')
+        recipient_email = request.data.get('email')
+        pdf_file = request.FILES.get('pdf_file')
+        business = get_current_business(request.user)
+        
+        # Get the invoice to find the party name
+        try:
+            purchase = Purchase.objects.get(purchase_no=purchase_no, business=business)
+            party_name = purchase.party.party_name
+        except Purchase.DoesNotExist:
+            return Response({'error': 'Purchase not found'}, status=404)
+        
+        if not pdf_file:
+            return Response({'error': 'No PDF file provided'}, status=400)
+        
+        if not recipient_email:
+            return Response({'error': 'No recipient email provided'}, status=400)
+            
+        if not purchase_no:
+            return Response({'error': 'No Purchase number provided'}, status=400)
+        
+        # Validate email format
+        try:
+            validate_email(recipient_email)
+        except ValidationError:
+            return Response({'error': 'Invalid email format'}, status=400)
+        
+        # Create a temporary file to store the PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            for chunk in pdf_file.chunks():
+                temp_file.write(chunk)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Send the email with business name and party name
+            send_purchase_email(recipient_email, temp_file_path, purchase_no, business.name, party_name)
+            return Response({'message': 'Purchase sent successfully'})
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+                
+    except Exception as e:
+        return Response({'error': str(e)}, status=400)
+    
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_payment_out_email_view(request):
+    try:
+        payment_out_number = request.data.get('payment_out_number')
+        recipient_email = request.data.get('email')
+        pdf_file = request.FILES.get('pdf_file')
+        business = get_current_business(request.user)
+        
+        # Get the invoice to find the party name
+        try:
+            payment_out = PaymentOut.objects.get(payment_out_number=payment_out_number, business=business)
+            party_name = payment_out.party.party_name
+        except PaymentOut.DoesNotExist:
+            return Response({'error': 'Payment out not found'}, status=404)
+        
+        if not pdf_file:
+            return Response({'error': 'No PDF file provided'}, status=400)
+        
+        if not recipient_email:
+            return Response({'error': 'No recipient email provided'}, status=400)
+            
+        if not payment_out_number:
+            return Response({'error': 'No Payment out number provided'}, status=400)
+        
+        # Validate email format
+        try:
+            validate_email(recipient_email)
+        except ValidationError:
+            return Response({'error': 'Invalid email format'}, status=400)
+        
+        # Create a temporary file to store the PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            for chunk in pdf_file.chunks():
+                temp_file.write(chunk)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Send the email with business name and party name
+            send_payment_out_email(recipient_email, temp_file_path, payment_out_number, business.name, party_name)
+            return Response({'message': 'Payment Out sent successfully'})
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+                
+    except Exception as e:
+        return Response({'error': str(e)}, status=400)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_purchasereturn_email_view(request):
+    try:
+        # print("Received data:", request.data)  # Add this line
+        purchasereturn_no = request.data.get('purchasereturn_no')
+        # print("Purchase return number:", purchasereturn_no)
+        recipient_email = request.data.get('email')
+        pdf_file = request.FILES.get('pdf_file')
+        business = get_current_business(request.user)
+        
+        # Get the invoice to find the party name
+        try:
+            purchasereturn = PurchaseReturn.objects.get(purchasereturn_no=purchasereturn_no, business=business)
+            party_name = purchasereturn.party.party_name
+        except PurchaseReturn.DoesNotExist:
+            return Response({'error': 'Purchase Return not found'}, status=404)
+        
+        if not pdf_file:
+            return Response({'error': 'No PDF file provided'}, status=400)
+        
+        if not recipient_email:
+            return Response({'error': 'No recipient email provided'}, status=400)
+            
+        if not purchasereturn_no:
+            return Response({'error': 'No purchasereturn number provided'}, status=400)
+        
+        # Validate email format
+        try:
+            validate_email(recipient_email)
+        except ValidationError:
+            return Response({'error': 'Invalid email format'}, status=400)
+        
+        # Create a temporary file to store the PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            for chunk in pdf_file.chunks():
+                temp_file.write(chunk)
+            temp_file_path = temp_file.name
+            print("------------1------",temp_file_path)
+        
+        try:
+            # Send the email with business name and party name
+            send_purchasereturn_email(recipient_email, temp_file_path, purchasereturn_no, business.name, party_name)
+            return Response({'message': 'PurchaseReturn sent successfully'})
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+                
+    except Exception as e:
+        return Response({'error': str(e)}, status=400)
+    
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_debitnote_email_view(request):
+    try:
+        print("Received data:", request.data)  # Add this line
+        debitnote_no = request.data.get('debitnote_no')
+        print("Purchase return number:", debitnote_no)
+        recipient_email = request.data.get('email')
+        pdf_file = request.FILES.get('pdf_file')
+        business = get_current_business(request.user)
+        
+        # Get the invoice to find the party name
+        try:
+            debitnote = DebitNote.objects.get(debitnote_no=debitnote_no, business=business)
+            party_name = debitnote.party.party_name
+        except DebitNote.DoesNotExist:
+            return Response({'error': 'DebitNote not found'}, status=404)
+        
+        if not pdf_file:
+            return Response({'error': 'No PDF file provided'}, status=400)
+        
+        if not recipient_email:
+            return Response({'error': 'No recipient email provided'}, status=400)
+            
+        if not debitnote_no:
+            return Response({'error': 'No debit note number provided'}, status=400)
+        
+        # Validate email format
+        try:
+            validate_email(recipient_email)
+        except ValidationError:
+            return Response({'error': 'Invalid email format'}, status=400)
+        
+        # Create a temporary file to store the PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            for chunk in pdf_file.chunks():
+                temp_file.write(chunk)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Send the email with business name and party name
+            send_debitnote_email(recipient_email, temp_file_path, debitnote_no, business.name, party_name)
+            return Response({'message': 'DebitNote sent successfully'})
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+                
+    except Exception as e:
+        return Response({'error': str(e)}, status=400)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_purchase_order_email_view(request):
+    try:
+        purchase_order_no = request.data.get('purchase_order_no')
+        recipient_email = request.data.get('email')
+        pdf_file = request.FILES.get('pdf_file')
+        business = get_current_business(request.user)
+        
+        # Get the invoice to find the party name
+        try:
+            purchase_order = PurchaseOrder.objects.get(purchase_order_no=purchase_order_no, business=business)
+            party_name = purchase_order.party.party_name
+        except PurchaseOrder.DoesNotExist:
+            return Response({'error': 'purchase_order not found'}, status=404)
+        
+        if not pdf_file:
+            return Response({'error': 'No PDF file provided'}, status=400)
+        
+        if not recipient_email:
+            return Response({'error': 'No recipient email provided'}, status=400)
+            
+        if not purchase_order_no:
+            return Response({'error': 'No purchase_order number provided'}, status=400)
+        
+        # Validate email format
+        try:
+            validate_email(recipient_email)
+        except ValidationError:
+            return Response({'error': 'Invalid email format'}, status=400)
+        
+        # Create a temporary file to store the PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            for chunk in pdf_file.chunks():
+                temp_file.write(chunk)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Send the email with business name and party name
+            send_purchase_order_email(recipient_email, temp_file_path, purchase_order_no, business.name, party_name)
+            return Response({'message': 'purchase_order sent successfully'})
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+                
+    except Exception as e:
+       return Response({'error': str(e)}, status=400)
