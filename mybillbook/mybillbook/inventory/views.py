@@ -1,6 +1,6 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.response import Response
 from django.db.models import F
 from django.http import JsonResponse
@@ -15,13 +15,24 @@ from users.utils import get_current_business, log_action
 from .permissions import HasItemPermission
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
+from django.views.decorators.csrf import csrf_exempt
+import openpyxl
+from rest_framework.parsers import MultiPartParser
+from django.db import transaction
+from datetime import date
+from users.models import Business
+from godown.models import Godown
+
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, HasItemPermission])
 def stock_value(request):
+    business = get_current_business(request.user) 
     # Query all items where itemType is 'Product'
-    items = Item.objects.filter(itemType='Product')
+   
+    items = Item.objects.filter(business=business, itemType='Product')
+
 
     stock_values = []
     total_stock_value = 0  # Initialize the total stock value
@@ -290,3 +301,96 @@ class GSTTaxRateDetailView(generics.RetrieveUpdateDestroyAPIView):
             "description": instance.description
         })
         instance.delete()
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser])
+def bulk_update_items_from_excel(request):
+    user = request.user
+
+    try:
+        business = Business.objects.get(owner=user)
+    except Business.DoesNotExist:
+        return Response({"error": "Business not found for user"}, status=status.HTTP_404_NOT_FOUND)
+
+    file = request.FILES.get("file")
+    if not file:
+        return Response({"error": "No file uploaded"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        wb = openpyxl.load_workbook(file)
+        sheet = wb.active
+        headers = [cell.value for cell in sheet[1]]
+
+        updated_count = 0
+        created_count = 0
+
+        with transaction.atomic():
+            for row in sheet.iter_rows(min_row=2, values_only=True):
+                row_data = dict(zip(headers, row))
+                item_id = row_data.get("ID")
+
+                item = Item.objects.filter(id=item_id, business=business).first() if item_id else None
+
+                if not item:
+                    # New item
+                    item = Item(business=business)
+                    created = True
+                else:
+                    created = False
+
+                item.itemName = row_data.get("Item Name")
+                item.itemCode = row_data.get("Item Code")
+                item.salesPrice = row_data.get("Sales Price") or 0
+                item.purchasePrice = row_data.get("Purchase Price") or 0
+                item.salesPriceType = row_data.get("Sales Price Type") or "With Tax"
+                item.purchasePriceType = row_data.get("Purchase Price Type") or "With Tax"
+                item.openingStock = row_data.get("Opening Stock") or 0
+                item.closingStock = item.openingStock
+                item.date = row_data.get("Date") or date.today()
+                item.itemBatch = row_data.get("Item Batch")
+                item.hsnCode = row_data.get("HSN Code")
+                item.description = row_data.get("Description")
+                item.lowStockQty = row_data.get("Low Stock Qty") or 0
+
+                # Boolean
+                low_stock_flag = row_data.get("Enable Low Stock Warning")
+                if isinstance(low_stock_flag, str):
+                    item.enableLowStockWarning = low_stock_flag.strip().lower() in ["true", "yes", "1"]
+                elif isinstance(low_stock_flag, bool):
+                    item.enableLowStockWarning = low_stock_flag
+                else:
+                    item.enableLowStockWarning = False
+
+                # Foreign keys
+                gst_id = row_data.get("GST Tax Rate ID")
+                item.gstTaxRate = GSTTaxRate.objects.filter(id=gst_id).first() if gst_id else None
+
+                unit_id = row_data.get("Measuring Unit ID")
+                item.measuringUnit = MeasuringUnit.objects.filter(id=unit_id).first() if unit_id else None
+
+                godown_id = row_data.get("Godown ID")
+                item.godown = Godown.objects.filter(id=godown_id).first() if godown_id else None
+
+                category_id = row_data.get("Category ID")
+                if category_id:
+                    category = ItemCategory.objects.filter(id=category_id).first()
+                    if not category:
+                        return Response({"error": f"Invalid Category ID: {category_id}"}, status=status.HTTP_400_BAD_REQUEST)
+                    item.category = category
+                else:
+                    return Response({"error": f"Category ID is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+                item.save()
+                if created:
+                    created_count += 1
+                else:
+                    updated_count += 1
+
+        return Response({
+            "message": f"{updated_count} items updated, {created_count} items created.",
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
