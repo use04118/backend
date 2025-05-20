@@ -30,7 +30,7 @@ class AutomatedInvoice(models.Model):
 )
 
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='automatedinvoices')
-    automated_invoice_no=models.CharField(max_length=50, unique=True)
+    automated_invoice_no=models.IntegerField(unique=True)
     party = models.ForeignKey(Party, on_delete=models.CASCADE)
     start_date = models.DateField()
     end_date = models.DateField()
