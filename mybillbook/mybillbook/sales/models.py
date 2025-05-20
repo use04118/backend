@@ -71,7 +71,7 @@ class Invoice(models.Model):
 )
 
     business = models.ForeignKey(Business, on_delete=models.CASCADE, blank=True , null=True, related_name='invoice')
-    invoice_no = models.CharField(max_length=50)
+    invoice_no = models.IntegerField()
     date = models.DateField(auto_now_add=False)
     party = models.ForeignKey(Party, on_delete=models.CASCADE, related_name='invoice')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Unpaid')
@@ -671,7 +671,7 @@ class Quotation(models.Model):
     )
     
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='quotation')
-    quotation_no = models.CharField(max_length=50)
+    quotation_no = models.IntegerField()
     date = models.DateField(auto_now_add=False)  
     party = models.ForeignKey(Party, on_delete=models.CASCADE)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES,default='Open')
@@ -1007,7 +1007,7 @@ class PaymentIn(models.Model):
     party = models.ForeignKey(Party, on_delete=models.CASCADE)
     date = models.DateField(default=now)
     payment_mode = models.CharField(max_length=100, choices=PAYMENT_MODE)
-    payment_in_number = models.CharField(max_length=50)
+    payment_in_number = models.IntegerField()
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     notes = models.TextField(blank=True, null=True)
     bank_account = models.ForeignKey(
@@ -1097,7 +1097,7 @@ class SalesReturn(models.Model):
 
     
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='salesreturn')
-    salesreturn_no = models.CharField(max_length=50)
+    salesreturn_no = models.IntegerField()
     date = models.DateField(auto_now_add=False)
     party = models.ForeignKey(Party, on_delete=models.CASCADE)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Unpaid')
@@ -1705,7 +1705,7 @@ class CreditNote(models.Model):
     )
     
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='creditnote')
-    credit_note_no = models.CharField(max_length=50)
+    credit_note_no = models.IntegerField()
     date = models.DateField(auto_now_add=False)
     party = models.ForeignKey(Party, on_delete=models.CASCADE)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Unpaid')
@@ -2291,7 +2291,7 @@ class DeliveryChallan(models.Model):
     )
     
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='deliverychallan')
-    delivery_challan_no = models.CharField(max_length=50)
+    delivery_challan_no = models.IntegerField()
     date = models.DateField(auto_now_add=False)  
     party = models.ForeignKey(Party, on_delete=models.CASCADE)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='Open')
@@ -2619,7 +2619,7 @@ class Proforma(models.Model):
     )
     
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='proforma')
-    proforma_no = models.CharField(max_length=50)
+    proforma_no = models.IntegerField()
     date = models.DateField(auto_now_add=False)  
     party = models.ForeignKey(Party, on_delete=models.CASCADE)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='Open')
