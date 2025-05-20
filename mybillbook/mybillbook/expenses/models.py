@@ -150,7 +150,7 @@ class Expense(models.Model):
     )
 
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='expenses', null=True, blank=True)
-    expense_no = models.CharField(max_length=50)
+    expense_no = models.IntegerField()
     original_invoice_no = models.CharField(max_length=50, null=True, blank=True)
     date = models.DateField()
     party = models.ForeignKey(Party, on_delete=models.CASCADE, null=True, blank=True)
