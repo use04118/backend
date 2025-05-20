@@ -187,7 +187,7 @@ CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOWED_ORIGINS = [
     "http://192.168.1.3:5173",  # React app
     "http://192.168.1.35:5173",  # React app
-    "https://kaleidoscopic-frangollo-146587.netlify.app",
+    "https://stupendous-kleicha-92b259.netlify.app/",
 ]
 
 
