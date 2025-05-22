@@ -165,6 +165,22 @@ class AutomatedInvoice(models.Model):
         today = date.today()
         return self.status == 'Active' and self.start_date <= today <= self.end_date
     
+    @classmethod
+    def get_next_automated_invoice_number(cls, business):
+        """Generate the next invoice number for a business."""
+        # Get the latest invoice for this specific business
+        latest_invoice = cls.objects.filter(business=business).order_by('-id').first()
+        
+        if latest_invoice:
+            # Extract the number part and increment
+            last_number = int(latest_invoice.automated_invoice_no)
+            next_invoice_no = last_number + 1
+        else:
+            # First invoice for this business
+            next_invoice_no = 1
+            
+        return next_invoice_no
+    
     def __str__(self):
         return f"Automated Invoice for {self.party} [{self.start_date} to {self.end_date}] - {self.status}"
 
