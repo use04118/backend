@@ -62,3 +62,11 @@ class AutomatedInvoiceItemDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = AutomatedInvoiceItemSerializer
 
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_next_automated_invoice_number(request):
+    business = get_current_business(request.user)
+    next_invoice_number = AutomatedInvoice.get_next_automated_invoice_number(business)
+    return Response({'next_automated_invoice_number': next_invoice_number})
+
+
