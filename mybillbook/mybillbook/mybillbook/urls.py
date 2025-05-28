@@ -34,5 +34,6 @@ urlpatterns = [
     path('cash-bank/', include('cash_and_bank.urls')),
     path('einvoicing', include('einvoicing.urls')),
     path('automated-bills/', include('automated_bills.urls')),
+    path('tracking/', include('tracking.urls')),
 
 ]
