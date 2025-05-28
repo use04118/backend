@@ -4,57 +4,83 @@ from django.conf import settings
 import os
 from datetime import datetime
 
-def send_invoice_email(recipient_email, invoice_pdf_path, invoice_no, business_name=None, party_name=None):
+from django.core.mail import EmailMultiAlternatives
+from django.conf import settings
+from django.urls import reverse
+from django.utils.http import urlencode
+from django.utils.timezone import now
+from datetime import datetime
+
+from django.core.mail import EmailMessage
+from django.conf import settings
+from datetime import datetime
+from django.utils.html import strip_tags
+
+def send_invoice_email(
+    recipient_email,
+    invoice_pdf_path,
+    invoice_no,
+    invoice_id,
+    business_name=None,
+    party_name=None
+):
     subject = f'Invoice #{invoice_no} from {business_name or "Your Company"}'
-    message = f'''
-Dear {party_name or "Valued Customer"},
 
-Thank you for your business with {business_name or "our company"}. Please find attached the invoice #{invoice_no} for your recent purchase.
+    # ✅ Use your actual backend URL
+    tracking_pixel_url = f'https://backend-3-2y61.onrender.com/track-email-open?doc_type=Invoice&doc_id={invoice_id}'
 
-Invoice Details:
-- Invoice Number: {invoice_no}
-- Date: {datetime.now().strftime("%d-%m-%Y")}
-- Customer Name: {party_name or "N/A"}
+    html_message = f'''
+    <html>
+    <body>
+        <p>Dear {party_name or "Valued Customer"},</p>
 
-If you have any questions or concerns regarding this invoice, please don't hesitate to contact us.
+        <p>Thank you for your business with {business_name or "our company"}.
+        Please find attached the invoice #{invoice_no} for your recent purchase.</p>
 
-Payment Terms:
-- Please ensure payment is made within the specified due date
-- For any payment-related queries, please contact our accounts department
+        <p><strong>Invoice Details:</strong><br>
+        - Invoice Number: {invoice_no}<br>
+        - Date: {datetime.now().strftime("%d-%m-%Y")}<br>
+        - Customer Name: {party_name or "N/A"}</p>
 
-Thank you for choosing {business_name or "our company"} for your business needs.
+        <p>If you have any questions or concerns regarding this invoice, please don't hesitate to contact us.</p>
 
-Best regards,
-{business_name or "Your Company"}
-Accounts Department
-'''
-    
-    email = EmailMessage(
+        <p><strong>Payment Terms:</strong><br>
+        - Please ensure payment is made within the specified due date<br>
+        - For any payment-related queries, please contact our accounts department</p>
+
+        <p>Thank you for choosing {business_name or "our company"} for your business needs.</p>
+
+        <p>Best regards,<br>
+        {business_name or "Your Company"}<br>
+        Accounts Department</p>
+
+        <img src="{tracking_pixel_url}" width="1" height="1" style="display:none;" alt="."/>
+    </body>
+    </html>
+    '''
+
+    plain_message = strip_tags(html_message)
+
+    # ✅ Use EmailMultiAlternatives
+    email = EmailMultiAlternatives(
         subject=subject,
-        body=message,
+        body=plain_message,
         from_email=settings.DEFAULT_FROM_EMAIL,
-        to=[recipient_email]
+        to=[recipient_email],
+        headers={
+            'X-Priority': '1',
+            'X-MSMail-Priority': 'High',
+            'X-Mailer': 'Microsoft Outlook Express 6.00.2900.2869',
+            'X-MimeOLE': 'Produced By Microsoft MimeOLE V6.00.2900.2869',
+        }
     )
-    
-    # Set email headers for better quality
-    email.extra_headers = {
-        'X-Priority': '1',  # High priority
-        'X-MSMail-Priority': 'High',
-        'X-Mailer': 'Microsoft Outlook Express 6.00.2900.2869',
-        'X-MimeOLE': 'Produced By Microsoft MimeOLE V6.00.2900.2869',
-        'Content-Transfer-Encoding': 'binary'
-    }
-    
-    # Attach the PDF with high quality settings
-    with open(invoice_pdf_path, 'rb') as f:
-        email.attach(
-            f'invoice_{invoice_no}.pdf',
-            f.read(),
-            'application/pdf'
-        )
-    
-    email.send()
 
+    email.attach_alternative(html_message, "text/html")
+
+    with open(invoice_pdf_path, 'rb') as f:
+        email.attach(f'invoice_{invoice_no}.pdf', f.read(), 'application/pdf')
+
+    email.send()
 
 def send_quotation_email(recipient_email, quotation_pdf_path, quotation_no, business_name=None, party_name=None):
     subject = f'Quotation #{quotation_no} from {business_name or "Your Company"}'
@@ -211,59 +237,72 @@ Accounts Department
     
     email.send()
 
+def send_credit_note_email(
+    recipient_email,
+    credit_note_pdf_path,
+    credit_note_no,
+    credit_note_id,
+    business_name=None,
+    party_name=None
+):
+    subject = f'Credit Note #{credit_note_no} from {business_name or "Your Company"}'
 
-def send_credit_note_email(recipient_email, credit_note_pdf_path, credit_note_no, business_name=None, party_name=None):
-    subject = f'credit_note #{credit_note_no} from {business_name or "Your Company"}'
-    message = f'''
-Dear {party_name or "Valued Customer"},
+    # 👇 Tracking pixel URL (adjust domain/path as needed)
+    tracking_pixel_url = f'https://backend-3-2y61.onrender.com/track-email-open?doc_type=CreditNote&doc_id={credit_note_id}'
 
-Thank you for your business with {business_name or "our company"}. Please find attached the invoice #{credit_note_no} for your recent purchase.
+    # 👇 HTML message with tracking
+    html_message = f'''
+    <html>
+    <body>
+        <p>Dear {party_name or "Valued Customer"},</p>
 
-credit_note Details:
-- credit_note Number: {credit_note_no}
-- Date: {datetime.now().strftime("%d-%m-%Y")}
-- Customer Name: {party_name or "N/A"}
+        <p>Thank you for your business with {business_name or "our company"}.
+        Please find attached the credit note #{credit_note_no} related to your recent transaction.</p>
 
-If you have any questions or concerns regarding this invoice, please don't hesitate to contact us.
+        <p><strong>Credit Note Details:</strong><br>
+        - Credit Note Number: {credit_note_no}<br>
+        - Date: {datetime.now().strftime("%d-%m-%Y")}<br>
+        - Customer Name: {party_name or "N/A"}</p>
 
-Payment Terms:
-- Please ensure payment is made within the specified due date
-- For any payment-related queries, please contact our accounts department
+        <p>If you have any questions or concerns regarding this credit note, please don't hesitate to contact us.</p>
 
-Thank you for choosing {business_name or "our company"} for your business needs.
+        <p>Thank you for choosing {business_name or "our company"} for your business needs.</p>
 
-Best regards,
-{business_name or "Your Company"}
-Accounts Department
-'''
-    
-    email = EmailMessage(
+        <p>Best regards,<br>
+        {business_name or "Your Company"}<br>
+        Accounts Department</p>
+
+        <!-- Invisible tracking pixel -->
+        <img src="{tracking_pixel_url}" width="1" height="1" style="display:none;" alt="."/>
+    </body>
+    </html>
+    '''
+
+    plain_message = strip_tags(html_message)
+
+    # ✅ Use EmailMultiAlternatives for HTML + plain text + attachment
+    email = EmailMultiAlternatives(
         subject=subject,
-        body=message,
+        body=plain_message,
         from_email=settings.DEFAULT_FROM_EMAIL,
-        to=[recipient_email]
+        to=[recipient_email],
+        headers={
+            'X-Priority': '1',
+            'X-MSMail-Priority': 'High',
+            'X-Mailer': 'Microsoft Outlook Express 6.00.2900.2869',
+            'X-MimeOLE': 'Produced By Microsoft MimeOLE V6.00.2900.2869',
+        }
     )
-    
-    # Set email headers for better quality
-    email.extra_headers = {
-        'X-Priority': '1',  # High priority
-        'X-MSMail-Priority': 'High',
-        'X-Mailer': 'Microsoft Outlook Express 6.00.2900.2869',
-        'X-MimeOLE': 'Produced By Microsoft MimeOLE V6.00.2900.2869',
-        'Content-Transfer-Encoding': 'binary'
-    }
-    
-    # Attach the PDF with high quality settings
+
+    email.attach_alternative(html_message, "text/html")
+
+    # ✅ Attach the Credit Note PDF
     with open(credit_note_pdf_path, 'rb') as f:
-        email.attach(
-            f'credit_note_{credit_note_no}.pdf',
-            f.read(),
-            'application/pdf'
-        )
-    
+        email.attach(f'credit_note_{credit_note_no}.pdf', f.read(), 'application/pdf')
+
     email.send()
 
-
+    
 def send_delivery_challan_email(recipient_email, delivery_challan_pdf_path, delivery_challan_no, business_name=None, party_name=None):
     subject = f'delivery_challan #{delivery_challan_no} from {business_name or "Your Company"}'
     message = f'''
