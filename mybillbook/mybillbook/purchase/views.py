@@ -28,6 +28,10 @@ import base64
 from django.core.validators import validate_email
 from users.models import Business
 from parties.models import Party
+from datetime import datetime
+from django.utils.timezone import now
+LOG_FILE = 'invoice_open_logs.txt' # You can change the location if needed
+
 
 # Create your views here.
 @api_view(['POST'])
@@ -452,6 +456,19 @@ def send_purchase_email_view(request):
         try:
             # Send the email with business name and party name
             send_purchase_email(recipient_email, temp_file_path, purchase_no, business.name, party_name)
+            # Update tracking record
+            from tracking.models import DocumentTracking
+            tracking = DocumentTracking.objects.get(
+                business=business,
+                document_type='Purchase',
+                purchase=purchase
+            )
+            tracking.is_sent = True
+            tracking.sent_at = now()
+            tracking.save()
+            
+            with open(LOG_FILE, 'a') as log_file:
+                log_file.write(f"{datetime.now().isoformat()} | Purchase | {party_name} | {purchase_no} | email sent to {recipient_email}\n")
             return Response({'message': 'Purchase sent successfully'})
         finally:
             # Clean up the temporary file
@@ -568,7 +585,7 @@ def send_debitnote_email_view(request):
     try:
         print("Received data:", request.data)  # Add this line
         debitnote_no = request.data.get('debitnote_no')
-        print("Purchase return number:", debitnote_no)
+        print("debit note number:", debitnote_no)
         recipient_email = request.data.get('email')
         pdf_file = request.FILES.get('pdf_file')
         business = get_current_business(request.user)
@@ -604,6 +621,20 @@ def send_debitnote_email_view(request):
         try:
             # Send the email with business name and party name
             send_debitnote_email(recipient_email, temp_file_path, debitnote_no, business.name, party_name)
+            
+            # Update tracking record
+            from tracking.models import DocumentTracking
+            tracking = DocumentTracking.objects.get(
+                business=business,
+                document_type='DebitNote',
+                debitnote=debitnote
+            )
+            tracking.is_sent = True
+            tracking.sent_at = now()
+            tracking.save()
+            
+            with open(LOG_FILE, 'a') as log_file:
+                log_file.write(f"{datetime.now().isoformat()} | Debit Note | {party_name} | {debitnote_no} | email sent to {recipient_email}\n")
             return Response({'message': 'DebitNote sent successfully'})
         finally:
             # Clean up the temporary file
