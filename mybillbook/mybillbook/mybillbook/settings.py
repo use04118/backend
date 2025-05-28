@@ -26,7 +26,7 @@ SECRET_KEY = 'django-insecure-r6x2zy+0^n%88f!*c$3c)o@)-zr$(958+qj^yf&cksm!z%gljd
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['192.168.1.37','192.168.1.7','192.168.1.40', '192.168.1.3', '192.168.1.35','192.168.1.43', 'localhost', '127.0.0.1','testserver','backend-3-2y61.onrender.com']
+ALLOWED_HOSTS = ['192.168.1.36','192.168.1.7','192.168.1.40', '192.168.1.3', '192.168.1.35','192.168.1.43', 'localhost', '127.0.0.1','testserver','backend-3-2y61.onrender.com']
 
 
 
@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'cash_and_bank',
     'einvoicing',
     'automated_bills',
+    'tracking',
     'hsn_api',
     'sac_api',
     'themes',
@@ -170,7 +171,7 @@ REST_FRAMEWORK = {
     
     'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 10,  # Limit results per page to 10
+    'PAGE_SIZE': 100,  # Limit results per page to 10
     
 
 }
@@ -240,3 +241,13 @@ LOGGING = {
         'level': 'INFO',
     },
 }
+
+# Email Configuration
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'  # Or your SMTP server
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = 'use04118@gmail.com'  # Add your email
+EMAIL_HOST_PASSWORD = 'bdtx fsgr tuof cvzd'  # Add your email password or app password
+DEFAULT_FROM_EMAIL = 'use04118@gmail.com'  # Add your default from email
+
