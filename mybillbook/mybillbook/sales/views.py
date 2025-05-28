@@ -27,6 +27,9 @@ import tempfile
 import os
 import base64
 from django.core.validators import validate_email
+from datetime import datetime
+from django.utils.timezone import now
+LOG_FILE = 'invoice_open_logs.txt' # You can change the location if needed
 
 # List & Create TCS
 class TcsListCreateView(generics.ListCreateAPIView):
@@ -879,8 +882,23 @@ def send_invoice_email_view(request):
         
         try:
             # Send the email with business name and party name
-            send_invoice_email(recipient_email, temp_file_path, invoice_no, business.name, party_name)
+            send_invoice_email(recipient_email, temp_file_path, invoice_no, invoice.id, business.name, party_name)
+            
+            # Update tracking record
+            from tracking.models import DocumentTracking
+            tracking = DocumentTracking.objects.get(
+                business=business,
+                document_type='Invoice',
+                invoice=invoice
+            )
+            tracking.is_sent = True
+            tracking.sent_at = now()
+            tracking.save()
+            
+            with open(LOG_FILE, 'a') as log_file:
+                log_file.write(f"{datetime.now().isoformat()} | Invoice | {party_name} | {invoice_no} | email sent to {recipient_email}\n")
             return Response({'message': 'Invoice sent successfully'})
+        
         finally:
             # Clean up the temporary file
             if os.path.exists(temp_file_path):
@@ -1080,6 +1098,19 @@ def send_credit_note_email_view(request):
         try:
             # Send the email with business name and party name
             send_credit_note_email(recipient_email, temp_file_path, credit_note_no, business.name, party_name)
+            # Update tracking record
+            from tracking.models import DocumentTracking
+            tracking = DocumentTracking.objects.get(
+                business=business,
+                document_type='CreditNote',
+                creditnote=credit_note
+            )
+            tracking.is_sent = True
+            tracking.sent_at = now()
+            tracking.save()
+            
+            with open(LOG_FILE, 'a') as log_file:
+                log_file.write(f"{datetime.now().isoformat()} | Credit Note | {party_name} | {credit_note_no} | email sent to {recipient_email}\n")
             return Response({'message': 'CreditNote sent successfully'})
         finally:
             # Clean up the temporary file
