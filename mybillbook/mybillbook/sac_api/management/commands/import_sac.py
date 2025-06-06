@@ -7,7 +7,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **kwargs):
         # Read the Excel file
-        file_path ='E:\Mybillbook\mybillbook\static\SAC_code.xlsx' # Adjust the path to your file
+        file_path ='E:\Mybillbook\mybillbook\mybillbook\static\SAC_code.xlsx' # Adjust the path to your file
         df = pd.read_excel(file_path)
 
         # Loop through the rows and insert data into the database
