@@ -8,6 +8,7 @@ from sales.serializers import InvoiceSerializer, InvoiceItemSerializer
 from users.utils import get_current_business
 from django.utils import timezone
 
+
 def generate_invoice_no(business):
     today = timezone.now().strftime("%Y%m%d")  # Correct usage of timezone.now()
     count = Invoice.objects.filter(
@@ -19,7 +20,8 @@ def generate_invoice_no(business):
     return f"AUTO-{today}-{count:03d}"
 
 def generate_sales_invoice_from_automated(automated_invoice):
-    invoice_no = automated_invoice.automated_invoice_no  # Or generate a new one if needed
+    
+    invoice_no = Invoice.get_next_invoice_number(automated_invoice.business)  # Or generate a new one if needed
     invoice = Invoice.objects.create(
         business=automated_invoice.business,
         party=automated_invoice.party,

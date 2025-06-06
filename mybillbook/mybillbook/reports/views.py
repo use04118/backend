@@ -21,7 +21,7 @@ from .models import CapitalEntry, LoanEntry, FixedAssetEntry, InvestmentEntry, L
 from .serializers import CapitalEntrySerializer, LoanEntrySerializer, FixedAssetEntrySerializer, InvestmentEntrySerializer, LoansAdvanceEntrySerializer, CurrentLiabilityEntrySerializer, CurrentAssetEntrySerializer
 from collections import defaultdict
 from django.db.models.functions import Cast
-
+from .utils import export_excel_view  # Import the decorator
 # import logging
 
 # # Create a logger to store audit logs
@@ -42,6 +42,7 @@ from rest_framework.permissions import IsAuthenticated
 #recivable ageing report
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def receivable_ageing_report(request):
     today = timezone.now().date()
     business = get_current_business(request.user)
@@ -96,6 +97,7 @@ def receivable_ageing_report(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def party_report_by_item(request):
     try:
         business = get_current_business(request.user)
@@ -165,6 +167,7 @@ def party_report_by_item(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def party_ledger(request, party_id):
     business = get_current_business(request.user)
 
@@ -279,6 +282,7 @@ def party_ledger(request, party_id):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def party_wise_outstanding(request):
     business = get_current_business(request.user)
     party_category_id = request.GET.get('party_category_id')
@@ -337,6 +341,7 @@ def party_wise_outstanding(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def sales_summary_categorywise(request):
     # Annotate invoice data with related fields
     invoices = Invoice.objects.select_related('party__category').annotate(
@@ -386,6 +391,7 @@ def sales_summary_categorywise(request):
 #ITEM REPORT BY PARTY
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def item_report_by_party(request):
     business = get_current_business(request.user)
 
@@ -451,6 +457,7 @@ def item_report_by_party(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def item_sales_and_purchase_summary(request):
     business = get_current_business(request.user)
 
@@ -536,6 +543,7 @@ def low_stock_summary(request):
 # RATE LIST
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def rate_list(request):
     business = get_current_business(request.user)
 
@@ -558,6 +566,7 @@ def rate_list(request):
 #STOCK DETAIL REPORTS
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def stock_details_report(request):
     item_id = request.GET.get('item_id')
     business = get_current_business(request.user)
@@ -667,6 +676,7 @@ def stock_details_report(request):
 # STOCK SUMMARY
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def stock_summary(request):
     business = get_current_business(request.user)
     category_id = request.GET.get('category_id')
@@ -718,6 +728,7 @@ def stock_summary(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def bill_wise_profit(request):
     business = get_current_business(request.user)
     party_id_filter = request.GET.get('party_id')
@@ -774,6 +785,7 @@ def bill_wise_profit(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def cash_and_bank_report(request):
     business = get_current_business(request.user)
     voucher_type_filter = request.GET.get('Voucher_type', None)
@@ -858,6 +870,7 @@ def cash_and_bank_report(request):
 #DAY BOOK
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def daybook(request):
     business = get_current_business(request.user)
     transaction_type_filter = request.GET.get('transaction_type')
@@ -909,6 +922,7 @@ def daybook(request):
 # #EXPENSE CATEGORY REPORT
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def expense_category(request):
     business = get_current_business(request.user)
 
@@ -934,6 +948,7 @@ def expense_category(request):
 #EXPENSE TRANSACTION REPORT
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def expense_transaction_report(request):
     business = get_current_business(request.user)
     category_filter = request.GET.get('category', None)
@@ -964,6 +979,7 @@ def expense_transaction_report(request):
 #SALES SUMMARY
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def sales_summary(request):
     business = get_current_business(request.user)
     party_id_filter = request.GET.get('party_id')
@@ -1006,6 +1022,7 @@ def sales_summary(request):
 #PURCHASE SUMMARY
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def purchase_summary(request):
     business = get_current_business(request.user)
 
@@ -1036,6 +1053,7 @@ def purchase_summary(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def add_loans_advance_entry(request):
     serializer = LoansAdvanceEntrySerializer(data=request.data)
     if serializer.is_valid():
@@ -1052,6 +1070,7 @@ def list_loans_advance_entries(request):
 
 @api_view(['PUT', 'DELETE'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def loans_advance_entry_detail(request, pk):
     try:
         entry = LoansAdvanceEntry.objects.get(pk=pk, business=get_current_business(request.user))
@@ -1070,6 +1089,7 @@ def loans_advance_entry_detail(request, pk):
     
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def add_investment_entry(request):
     serializer = InvestmentEntrySerializer(data=request.data)
     if serializer.is_valid():
@@ -1079,6 +1099,7 @@ def add_investment_entry(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def list_investment_entries(request):
     entries = InvestmentEntry.objects.filter(business=get_current_business(request.user))
     serializer = InvestmentEntrySerializer(entries, many=True)
@@ -1086,6 +1107,7 @@ def list_investment_entries(request):
 
 @api_view(['PUT', 'DELETE'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def investment_entry_detail(request, pk):
     try:
         entry = InvestmentEntry.objects.get(pk=pk, business=get_current_business(request.user))
@@ -1104,6 +1126,7 @@ def investment_entry_detail(request, pk):
     
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def add_fixed_asset_entry(request):
     serializer = FixedAssetEntrySerializer(data=request.data)
     if serializer.is_valid():
@@ -1113,6 +1136,7 @@ def add_fixed_asset_entry(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def list_fixed_asset_entries(request):
     entries = FixedAssetEntry.objects.filter(business=get_current_business(request.user))
     serializer = FixedAssetEntrySerializer(entries, many=True)
@@ -1120,6 +1144,7 @@ def list_fixed_asset_entries(request):
 
 @api_view(['PUT', 'DELETE'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def fixed_asset_entry_detail(request, pk):
     try:
         entry = FixedAssetEntry.objects.get(pk=pk, business=get_current_business(request.user))
@@ -1138,6 +1163,7 @@ def fixed_asset_entry_detail(request, pk):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def add_current_asset_entry(request):
     serializer = CurrentAssetEntrySerializer(data=request.data)
     if serializer.is_valid():
@@ -1147,6 +1173,7 @@ def add_current_asset_entry(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def list_current_asset_entries(request):
     entries = CurrentAssetEntry.objects.filter(business=get_current_business(request.user))
     serializer = CurrentAssetEntrySerializer(entries, many=True)
@@ -1154,6 +1181,7 @@ def list_current_asset_entries(request):
 
 @api_view(['PUT', 'DELETE'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def current_asset_entry_detail(request, pk):
     try:
         entry = CurrentAssetEntry.objects.get(pk=pk, business=get_current_business(request.user))
@@ -1173,6 +1201,7 @@ def current_asset_entry_detail(request, pk):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def add_loan_entry(request):
     serializer = LoanEntrySerializer(data=request.data)
     if serializer.is_valid():
@@ -1182,6 +1211,7 @@ def add_loan_entry(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def list_loan_entries(request):
     entries = LoanEntry.objects.filter(business=get_current_business(request.user))
     serializer = LoanEntrySerializer(entries, many=True)
@@ -1189,6 +1219,7 @@ def list_loan_entries(request):
 
 @api_view(['PUT', 'DELETE'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def loan_entry_detail(request, pk):
     try:
         entry = LoanEntry.objects.get(pk=pk, business=get_current_business(request.user))
@@ -1208,6 +1239,7 @@ def loan_entry_detail(request, pk):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def add_current_liability_entry(request):
     serializer = CurrentLiabilityEntrySerializer(data=request.data)
     if serializer.is_valid():
@@ -1217,6 +1249,7 @@ def add_current_liability_entry(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def list_current_liability_entries(request):
     entries = CurrentLiabilityEntry.objects.filter(business=get_current_business(request.user))
     serializer = CurrentLiabilityEntrySerializer(entries, many=True)
@@ -1224,6 +1257,7 @@ def list_current_liability_entries(request):
 
 @api_view(['PUT', 'DELETE'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def current_liability_entry_detail(request, pk):
     try:
         entry = CurrentLiabilityEntry.objects.get(pk=pk, business=get_current_business(request.user))
@@ -1242,6 +1276,7 @@ def current_liability_entry_detail(request, pk):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def add_capital_entry(request):
     serializer = CapitalEntrySerializer(data=request.data)
     if serializer.is_valid():
@@ -1251,6 +1286,7 @@ def add_capital_entry(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def list_capital_entries(request):
     entries = CapitalEntry.objects.filter(business=get_current_business(request.user))
     serializer = CapitalEntrySerializer(entries, many=True)
@@ -1258,6 +1294,7 @@ def list_capital_entries(request):
 
 @api_view(['PUT', 'DELETE'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def capital_entry_detail(request, pk):
     try:
         entry = CapitalEntry.objects.get(pk=pk, business=get_current_business(request.user))
@@ -1276,6 +1313,7 @@ def capital_entry_detail(request, pk):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def balance_sheet(request):
     business = get_current_business(request.user)
     start_date = request.GET.get('start_date')
@@ -1500,6 +1538,7 @@ def balance_sheet(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def profit_and_loss(request):
     business = get_current_business(request.user)
 
@@ -1617,6 +1656,7 @@ def profit_and_loss(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def gstr_1(request):
     business = get_current_business(request.user)
 
@@ -1682,6 +1722,7 @@ def gstr_1(request):
     
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def gst_purchase_with_hsn(request):
     business = get_current_business(request.user)
 
@@ -1743,6 +1784,7 @@ def gst_purchase_with_hsn(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def gst_sales_with_hsn(request):
     business = get_current_business(request.user)
 
@@ -1800,6 +1842,7 @@ def gst_sales_with_hsn(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def hsn_wise_sales_summary(request):
     business = get_current_business(request.user)
 
@@ -1855,6 +1898,7 @@ def hsn_wise_sales_summary(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def gstr_2_purchase(request):
     business = get_current_business(request.user)
 
@@ -1966,6 +2010,7 @@ def gstr_2_purchase(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def tcs_payable(request):
     business = get_current_business(request.user)
 
@@ -2024,6 +2069,7 @@ def tcs_payable(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def tcs_receivable(request):
     business = get_current_business(request.user)
 
@@ -2080,6 +2126,7 @@ def tcs_receivable(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def tds_receivable(request):
     business = get_current_business(request.user)
 
@@ -2114,6 +2161,7 @@ def tds_receivable(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def tds_payable(request):
     # Start building the query
     business = get_current_business(request.user)
@@ -2173,6 +2221,7 @@ def tds_payable(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def audit_trial(request):
     business = get_current_business(request.user)
     
@@ -2251,6 +2300,7 @@ def round_nested_dict(d):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@export_excel_view  # Apply the decorator here
 def gstr_3b(request):
     business = get_current_business(request.user)
     business_state = business.state

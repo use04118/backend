@@ -12,7 +12,7 @@ class Command(BaseCommand):
             'seed_default_tds',  # Sales app
             'import_hsn',  # HSN API app
             'import_sac',  # SAC API app
-            'seed_plans',  # Users app
+            'seed_subscription_plans',  # Users app
             'seed_roles',  # Users app,
             'seed_states',  # Godown app,
             'celery',

@@ -5,10 +5,12 @@ urlpatterns = [
     # Automated Invoice Views
     path('automated-invoices/', views.AutomatedInvoiceListCreateView.as_view(), name='automated_invoice_list_create'),
     path('automated-invoices/<int:pk>/', views.AutomatedInvoiceDetailView.as_view(), name='automated_invoice_detail'),
+    path('automated-invoice/next-number/', views.get_next_automated_invoice_number, name='next-automated-invoice-number'),
+
 
     # Automated Invoice Item Views
-    path('automated-invoice-items/', views.AutomatedInvoiceItemListCreateView.as_view(), name='automated_invoice_item_list_create'),
-    path('automated-invoice-items/<int:pk>/', views.AutomatedInvoiceItemDetailView.as_view(), name='automated_invoice_item_detail'),
+    # path('automated-invoice-items/', views.AutomatedInvoiceItemListCreateView.as_view(), name='automated_invoice_item_list_create'),
+    # path('automated-invoice-items/<int:pk>/', views.AutomatedInvoiceItemDetailView.as_view(), name='automated_invoice_item_detail'),
 
     # Optional: Trigger generation manually
     # path('generate-invoice/<int:pk>/', views.GenerateInvoiceFromAutomatedView.as_view(), name='generate_invoice'),

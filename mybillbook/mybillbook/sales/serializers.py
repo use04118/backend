@@ -84,13 +84,25 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         """Create InvoiceItem and deduct stock."""
+        print("\n=== InvoiceItem Creation Debug ===")
         item = validated_data.get('item')
+        print(f"Creating item: {item.itemName if item else 'Service'}")
+        print(f"Quantity: {validated_data['quantity']}")
+        if item:
+            print(f"Initial stock: {item.closingStock}")
+            print(f"Stock to deduct: {validated_data['quantity']}")
+            print(f"Expected final stock: {item.closingStock - validated_data['quantity']}")
+
         invoice_item = InvoiceItem.objects.create(**validated_data)
 
         # ✅ Deduct stock if it's an item (not service)
         if item:
             item.closingStock -= validated_data['quantity']
             item.save()
+            print(f"Final stock after deduction: {item.closingStock}")
+            print("Stock deduction completed successfully")
+        else:
+            print("No stock deduction needed (service item)")
 
         return invoice_item
     
@@ -100,17 +112,36 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
         new_quantity = validated_data.get('quantity', old_quantity)
         item = instance.item
 
-        # ✅ Reverse stock if item is being updated
-        if item:
-            item.closingStock += old_quantity  # Add back old stock
-            item.save()
+        print(f"\n=== InvoiceItem Update Debug ===")
+        print(f"Item: {item.itemName if item else 'Service'}")
+        print(f"Old quantity: {old_quantity}")
+        print(f"New quantity: {new_quantity}")
+        print(f"Initial stock: {item.closingStock if item else 'N/A'}")
 
-        # ✅ Deduct new stock if updated quantity is less
-        if item and new_quantity > 0:
-            if item.closingStock < new_quantity:
-                raise serializers.ValidationError(f"Not enough stock for {item.itemName}. Available: {item.closingStock}")
-            item.closingStock -= new_quantity
-            item.save()
+        # Handle stock adjustment
+        if item:
+            # Calculate the difference in quantity
+            quantity_difference = new_quantity - old_quantity
+            print(f"Quantity difference: {quantity_difference}")
+            print(f"Current stock before adjustment: {item.closingStock}")
+            
+            # Only adjust stock if there's an actual change in quantity
+            if quantity_difference != 0:
+                if quantity_difference > 0:
+                    # If increasing quantity, check if we have enough stock
+                    if item.closingStock < quantity_difference:
+                        raise serializers.ValidationError(f"Not enough stock for {item.itemName}. Available: {item.closingStock}")
+                    # Deduct the additional quantity
+                    item.closingStock -= quantity_difference
+                    print(f"Decreased stock by {quantity_difference}. New stock: {item.closingStock}")
+                elif quantity_difference < 0:
+                    # If decreasing quantity, add back the difference
+                    item.closingStock += abs(quantity_difference)
+                    print(f"Increased stock by {abs(quantity_difference)}. New stock: {item.closingStock}")
+                
+                item.save()
+            else:
+                print("No quantity change, skipping stock adjustment")
 
         # ✅ Update the InvoiceItem
         for attr, value in validated_data.items():
@@ -118,9 +149,8 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
         instance.save()
         return instance
         
-    
     def delete(self, instance):
-        print("""Reverse stock when item is deleted.""")
+        """Reverse stock when item is deleted."""
         item = instance.item
         if item:
             item.closingStock += instance.quantity
@@ -148,7 +178,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'business', 'id', 'invoice_no', 'date', 'party', 'status',
             'payment_term', 'due_date', 'amount_received', 'is_fully_paid',
             'payment_method', 'discount', 'total_amount', 'balance_amount',
-            'invoice_items', 'notes', 'signature', 'taxable_amount',
+            'invoice_items', 'notes', 'taxable_amount',
             'apply_tcs', 'tcs', 'tcs_on', 'tcs_amount', 'next_invoice_number',
             'bank_account'
         ]
@@ -199,50 +229,179 @@ class InvoiceSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        print("create")
+        print("\n=== Invoice Creation Debug ===")
         invoice_items_data = validated_data.pop('invoice_items', [])
+        print(f"Creating invoice with {len(invoice_items_data)} items")
             
         invoice = Invoice.objects.create(**validated_data)
+        print(f"Created invoice: {invoice.invoice_no}")
 
-        # ✅ Create each InvoiceItem without validation errors
-        for item_data in invoice_items_data:
-            item_data['invoice'] = invoice  # Inject invoice here after creation
-            InvoiceItem.objects.create(**item_data)
+        # ✅ Create each InvoiceItem using the serializer
+        for idx, item_data in enumerate(invoice_items_data, 1):
+            print(f"\nProcessing item {idx} of {len(invoice_items_data)}")
+            
+            # Convert model instances to primary keys
+            if 'item' in item_data and hasattr(item_data['item'], 'id'):
+                item_data['item'] = item_data['item'].id
+            if 'service' in item_data and hasattr(item_data['service'], 'id'):
+                item_data['service'] = item_data['service'].id
+            if 'gstTaxRate' in item_data and hasattr(item_data['gstTaxRate'], 'id'):
+                item_data['gstTaxRate'] = item_data['gstTaxRate'].id
+            
+            item_data['invoice'] = invoice.id  # Use invoice ID instead of instance
+            print(f"Item data after conversion: {item_data}")
+            
+            try:
+                # Use the serializer instead of direct model creation
+                item_serializer = InvoiceItemSerializer(data=item_data)
+                if item_serializer.is_valid():
+                    item_serializer.save()
+                    print(f"Successfully created item {idx}")
+                else:
+                    print(f"Validation errors for item {idx}: {item_serializer.errors}")
+                    raise serializers.ValidationError(item_serializer.errors)
+            except Exception as e:
+                print(f"Error creating item {idx}: {str(e)}")
+                raise
 
         # ✅ The save() method in Invoice will automatically update balance
         invoice.save()
+        print("\nInvoice creation completed successfully")
         return invoice
 
     def update(self, instance, validated_data):
         """Update Invoice and its related InvoiceItems."""
+        print("\n=== Invoice Update Debug ===")
         # Extract invoice_items from validated data
         invoice_items_data = validated_data.pop('invoice_items', [])
+        
+        # Calculate old total before any changes
+        old_total = instance.get_total_amount()
+        print(f"Old total before update: {old_total}")
+        
         # Step 1: Update the main Invoice fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
-        instance.save()  # Save the main Invoice model after updating its fields
+        instance.save()
+        
         # Step 2: Handle InvoiceItem updates/deletions
         existing_items = instance.invoice_items.all()
-        existing_item_ids = [item.id for item in existing_items]
-        updated_item_ids = [item_data.get('id') for item_data in invoice_items_data if item_data.get('id')]
-        # Step 3: Delete removed items
-        for item_id in set(existing_item_ids) - set(updated_item_ids):
-            item_to_delete = instance.invoice_items.get(id=item_id)
-            item_to_delete.delete()  # Delete the InvoiceItem
+        existing_item_map = {item.item.id if item.item else item.service.id: item for item in existing_items}
+        
+        # Convert all item references to IDs for comparison
+        updated_item_ids = []
+        for item_data in invoice_items_data:
+            if 'item' in item_data:
+                item = item_data['item']
+                item_id = item.id if hasattr(item, 'id') else item
+                updated_item_ids.append(item_id)
+            elif 'service' in item_data:
+                service = item_data['service']
+                service_id = service.id if hasattr(service, 'id') else service
+                updated_item_ids.append(service_id)
+        
+        print(f"\nExisting items: {list(existing_item_map.keys())}")
+        print(f"Updated items: {updated_item_ids}")
+        
+        # Step 3: Delete removed items and update inventory
+        for item_id in set(existing_item_map.keys()) - set(updated_item_ids):
+            item_to_delete = existing_item_map[item_id]
+            print(f"\nDeleting item ID: {item_id}")
+            print(f"Item to delete: {item_to_delete.item.itemName if item_to_delete.item else item_to_delete.service.serviceName}")
+            print(f"Current stock before deletion: {item_to_delete.item.closingStock if item_to_delete.item else 'N/A'}")
+            # Delete the item using the serializer's delete method
+            InvoiceItemSerializer().delete(item_to_delete)
+            print(f"Stock after deletion: {item_to_delete.item.closingStock if item_to_delete.item else 'N/A'}")
+        
         # Step 4: Update or Create new items
         for item_data in invoice_items_data:
-            item_id = item_data.get('id')
-            if item_id:
+            # Get the correct item ID regardless of whether it's a model instance or ID
+            if 'item' in item_data:
+                item = item_data['item']
+                item_id = item.id if hasattr(item, 'id') else item
+            else:
+                service = item_data['service']
+                item_id = service.id if hasattr(service, 'id') else service
+
+            if item_id in existing_item_map:
                 # Update existing item
-                item_instance = existing_items.get(id=item_id)
-                # Update the item using the InvoiceItemSerializer
-                InvoiceItemSerializer().update(item_instance, item_data)
+                print(f"\nUpdating item ID: {item_id}")
+                item_instance = existing_item_map[item_id]
+                print(f"Item being updated: {item_instance.item.itemName if item_instance.item else item_instance.service.serviceName}")
+                print(f"Current stock before update: {item_instance.item.closingStock if item_instance.item else 'N/A'}")
+                
+                # Handle stock adjustment
+                if item_instance.item:
+                    # Calculate the difference in quantity
+                    quantity_difference = item_data['quantity'] - item_instance.quantity
+                    print(f"Old quantity: {item_instance.quantity}")
+                    print(f"New quantity: {item_data['quantity']}")
+                    print(f"Quantity difference: {quantity_difference}")
+                    
+                    # Only adjust stock if there's an actual change in quantity
+                    if quantity_difference != 0:
+                        if quantity_difference > 0:
+                            # If increasing quantity, check if we have enough stock
+                            if item_instance.item.closingStock < quantity_difference:
+                                raise serializers.ValidationError(f"Not enough stock for {item_instance.item.itemName}. Available: {item_instance.item.closingStock}")
+                            # Deduct the additional quantity
+                            item_instance.item.closingStock -= quantity_difference
+                            print(f"Decreased stock by {quantity_difference}. New stock: {item_instance.item.closingStock}")
+                        elif quantity_difference < 0:
+                            # If decreasing quantity, add back the difference
+                            item_instance.item.closingStock += abs(quantity_difference)
+                            print(f"Increased stock by {abs(quantity_difference)}. New stock: {item_instance.item.closingStock}")
+                        
+                        item_instance.item.save()
+                    else:
+                        print("No quantity change, skipping stock adjustment")
+                
+                # Update the item
+                for attr, value in item_data.items():
+                    setattr(item_instance, attr, value)
+                item_instance.save()
             else:
                 # Create new item
-                item_data['invoice'] = instance  # Associate the new InvoiceItem with the current Invoice
-                InvoiceItem.objects.create(**item_data)
-        # Step 5: Automatically recalculate balance after saving changes
-        instance.save()  # This ensures the updated Invoice object reflects the changes
+                print(f"\nCreating new item")
+                print(f"Item data: {item_data}")
+                # Convert model instances to their primary keys
+                if 'item' in item_data and hasattr(item_data['item'], 'id'):
+                    item_data['item'] = item_data['item'].id
+                if 'service' in item_data and hasattr(item_data['service'], 'id'):
+                    item_data['service'] = item_data['service'].id
+                if 'gstTaxRate' in item_data and hasattr(item_data['gstTaxRate'], 'id'):
+                    item_data['gstTaxRate'] = item_data['gstTaxRate'].id
+                
+                item_data['invoice'] = instance.id
+                serializer = InvoiceItemSerializer(data=item_data)
+                if serializer.is_valid():
+                    serializer.save()
+                else:
+                    print(f"Validation errors: {serializer.errors}")
+                    raise serializers.ValidationError(serializer.errors)
+        
+        # Step 5: Calculate new total after all changes
+        new_total = instance.get_total_amount()
+        print(f"\nNew total after update: {new_total}")
+        
+        # Step 6: Update party balance
+        party = instance.party
+        if party.balance_type == 'To Collect':
+            # First reverse the old total
+            party.closing_balance -= old_total
+            # Then add the new total
+            party.closing_balance += new_total
+        elif party.balance_type == 'To Pay':
+            # First reverse the old total
+            party.closing_balance += old_total
+            # Then subtract the new total
+            party.closing_balance -= new_total
+        
+        party.save()
+        print(f"Party balance after update: {party.closing_balance}")
+        
+        # Step 7: Save the invoice with updated totals
+        instance.save()
         return instance
 
 
@@ -363,7 +522,7 @@ class QuotationSerializer(serializers.ModelSerializer):
         model = Quotation
         fields = fields = [
             'business','id', 'quotation_no', 'date', 'party', 'status', 
-            'payment_term', 'due_date', 'discount', 'total_amount', 'balance_amount', 'quotation_items', 'notes' , 'signature' , 'taxable_amount','next_quotation_number'
+            'payment_term', 'due_date', 'discount', 'total_amount', 'balance_amount', 'quotation_items', 'notes' , 'taxable_amount','next_quotation_number'
         ]
         read_only_fields = ['business','next_quotation_number']
 
@@ -515,7 +674,7 @@ class SalesReturnItemSerializer(serializers.ModelSerializer):
         if item and new_quantity > 0:
             if item.closingStock < new_quantity:
                 raise serializers.ValidationError(f"Not enough stock for {item.itemName}. Available: {item.closingStock}")
-            item.closingStock += new_quantity
+            item.closingStock -= new_quantity
             item.save()
 
         # ✅ Update the InvoiceItem
@@ -553,7 +712,7 @@ class SalesReturnSerializer(serializers.ModelSerializer):
         fields = [
             'business','id', 'salesreturn_no', 'date', 'party', 'status', 
             'amount_received', 'is_fully_paid','invoice_no','invoice_id',
-            'payment_method', 'discount', 'total_amount', 'balance_amount', 'salesreturn_items', 'notes' , 'signature' ,'taxable_amount',
+            'payment_method', 'discount', 'total_amount', 'balance_amount', 'salesreturn_items', 'notes' ,'taxable_amount',
             'apply_tcs', 'tcs', 'tcs_on', 'tcs_amount','next_salesreturn_number','bank_account'
         ]
         read_only_fields = ['business', 'total_amount', 'balance_amount',
@@ -646,7 +805,7 @@ class SalesReturnSerializer(serializers.ModelSerializer):
                 item_data['salesreturn'] = instance
                 SalesReturnItem.objects.create(**item_data)
 
-        # ✅ Step 5: Automatically recalculate balance
+        # ✅ Step 5: Automatically recalculate balance after saving changes
         instance.save()
         return instance
 
@@ -821,7 +980,7 @@ class CreditNoteItemSerializer(serializers.ModelSerializer):
         if item and new_quantity > 0:
             if item.closingStock < new_quantity:
                 raise serializers.ValidationError(f"Not enough stock for {item.itemName}. Available: {item.closingStock}")
-            item.closingStock += new_quantity
+            item.closingStock -= new_quantity
             item.save()
 
         # ✅ Update the InvoiceItem
@@ -857,7 +1016,7 @@ class CreditNoteSerializer(serializers.ModelSerializer):
         model = CreditNote
         fields = ['business','id','credit_note_no', 'date', 'party', 'status', 'amount_received',
                   'is_fully_paid','payment_method', 'total_amount', 'balance_amount','creditnote_items','discount', 
-                  'notes' , 'signature' , 'taxable_amount',
+                  'notes' , 'taxable_amount',
             'apply_tcs', 'tcs', 'tcs_on', 'tcs_amount' ,'salesreturn_no' , 'salesreturn_id','next_creditnote_number','bank_account']
         
         read_only_fields = ['business', 'total_amount', 'balance_amount',
@@ -942,6 +1101,9 @@ class CreditNoteSerializer(serializers.ModelSerializer):
             if item_id:
                 # Update existing item
                 item_instance = instance.creditnote_items.get(id=item_id)
+                if 'quantity' in item_data:
+                    item_instance.quantity = item_data['quantity']
+
                 CreditNoteItemSerializer().update(item_instance, item_data)
             else:
                 # Create new item
@@ -986,7 +1148,7 @@ class DeliveryChallanItemSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DeliveryChallanItem
-        fields = [ 'id','deliverychallan','item', 'item_name', 'unit_price', 'quantity', 'amount', 'price_item','available_stock','gstTaxRate' ,'service', 'service_name','tax_rate', 'tax_rate_amount', 'cess_rate', 'cess_rate_amount' , 'cgst' , 'cgst_amount' ,'igst' , 'igst_amount' ,'sgst', 'sgst_amount','hsnCode','sacCode','salesPrice_with_tax', 'purchasePrice_with_tax', 'salesPrice_without_tax', 'purchasePrice_without_tax', 'salesPriceType','type','discount'
+        fields = [ 'id','deliverychallan','item', 'item_name', 'unit_price', 'quantity', 'amount', 'price_item','available_stock','gstTaxRate' ,'service', 'service_name','tax_rate', 'tax_rate_amount', 'cess_rate', 'cess_rate_amount' , 'cgst' , 'cgst_amount' ,'igst' , 'igst_amount', 'sgst', 'sgst_amount','hsnCode','sacCode','salesPrice_with_tax', 'purchasePrice_with_tax', 'salesPrice_without_tax', 'purchasePrice_without_tax', 'salesPriceType','type','discount'
         ]
         
         extra_kwargs = {
@@ -1067,7 +1229,7 @@ class DeliveryChallanSerializer(serializers.ModelSerializer):
         model = DeliveryChallan
         fields = ['business','id','delivery_challan_no', 'date', 'party', 'status',  
                   'deliverychallan_items','discount', 'total_amount',
-                  'balance_amount','notes' , 'signature' ,'taxable_amount','next_deliverychallan_number']
+                  'balance_amount','notes'  ,'taxable_amount','next_deliverychallan_number']
         read_only_fields = ['business','next_deliverychallan_number']
 
     def get_next_deliverychallan_number(self, obj):
@@ -1249,7 +1411,7 @@ class ProformaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Proforma
         fields = ['business','id','proforma_no', 'date', 'party', 'status', 'payment_term', 
-                  'due_date', 'proforma_items', 'discount', 'total_amount', 'balance_amount','notes' , 'signature' ,'taxable_amount','next_proforma_number']
+                  'due_date', 'proforma_items', 'discount', 'total_amount', 'balance_amount','notes'  ,'taxable_amount','next_proforma_number']
         read_only_fields = ['business','next_proforma_number']
 
     def get_next_proforma_number(self, obj):

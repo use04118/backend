@@ -3,7 +3,7 @@ from rest_framework_simplejwt.views import (
     TokenRefreshView,
     TokenVerifyView,
 )
-from .views import MeView,UserProfileView,RequestOTPView,  CreateBusinessView,InviteStaffView, VerifyUnifiedOTPView,ListPendingInvitesView,ResendStaffInviteView,ListStaffView,UpdateStaffView,MyBusinessesView,SwitchBusinessView,DebugCacheView,CurrentBusinessView,BusinessDetailView,ListPlansView,CurrentSubscriptionView,SubscribeBusinessView,AuditLogListView,AllAuditLogsView,IndianStatesView, IndustryTypeListView, RegistrationTypeListView,ValidateGSTDetails
+from .views import ManagePendingInviteView, MeView,UserProfileView,RequestOTPView,  CreateBusinessView,InviteStaffView, VerifyUnifiedOTPView,ListPendingInvitesView,ResendStaffInviteView,ListStaffView,UpdateStaffView,MyBusinessesView,SwitchBusinessView,DebugCacheView,CurrentBusinessView,BusinessDetailView,ListPlansView,CurrentSubscriptionView,SubscribeBusinessView,AuditLogListView,AllAuditLogsView,IndianStatesView, IndustryTypeListView, RegistrationTypeListView,ValidateGSTDetails, CheckSubscriptionStatusView, CreateTrialSubscriptionView, ReinviteStaffView
 
 urlpatterns = [
     path('me/', MeView.as_view(), name='me'),
@@ -20,12 +20,18 @@ urlpatterns = [
     path("staff/invites/", ListPendingInvitesView.as_view()),
     path("staff/resend-invite/", ResendStaffInviteView.as_view()),
     path('staff/<int:user_id>/', UpdateStaffView.as_view()),
+    path('staff/<int:user_id>/reinvite/', ReinviteStaffView.as_view(), name='reinvite-staff'),
+    path("staff/pending/manage/", ManagePendingInviteView.as_view(), name="manage_pending_invite"),
     path('my-business/', MyBusinessesView.as_view()),
     path('switch-business/', SwitchBusinessView.as_view()),
     path('current-business/', CurrentBusinessView.as_view()),
-    path('plans/', ListPlansView.as_view(), name='subscription-plans'),
-    path('subscription/', CurrentSubscriptionView.as_view(), name='current-subscription'),
-    path('subscribe-plans/', SubscribeBusinessView.as_view(), name='subscribe-plans'),
+    
+    path('plans/', ListPlansView.as_view(), name='list-plans'),
+    path('subscribe/', SubscribeBusinessView.as_view(), name='subscribe'),
+    path('current-subscription/', CurrentSubscriptionView.as_view(), name='current-subscription'),
+    path('check-subscription/', CheckSubscriptionStatusView.as_view(), name='check-subscription'),
+    path('create-trial/', CreateTrialSubscriptionView.as_view(), name='create-trial'),
+    
     path("audit-logs/", AuditLogListView.as_view(), name="audit-logs"),
     path("audit-logs/all/", AllAuditLogsView.as_view(), name="all_audit_logs"),
     path('indian-states/', IndianStatesView.as_view(), name='indian-states'),

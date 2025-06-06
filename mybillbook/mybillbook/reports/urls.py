@@ -3,6 +3,7 @@ from .views import gstr_1,receivable_ageing_report,party_ledger,party_wise_outst
 from . import views
 
 
+
 urlpatterns = [
     path('party-wise-outstanding/', party_wise_outstanding, name='party_wise_outstanding'),
     path('party-report-by-item/', party_report_by_item, name='party_report_by_item'),
@@ -18,20 +19,7 @@ urlpatterns = [
     path('item-sales-and-purchase_summary/', item_sales_and_purchase_summary, name='item_sales_and_purchase_summary'),
     path('profit-and-loss/', profit_and_loss, name='profit_and_loss'),
     path('gstr-1/', gstr_1, name='gstr-1'),
-    
-    # path('tds-receivable-entries/', views.list_tds_receivable_entries, name='list_tds_receivable_entries'),
-    # path('tds-receivable-entries/add/', views.add_tds_receivable_entry, name='add_tds_receivable_entry'),
-    # path('tds-receivable-entries/<int:pk>/', views.tds_receivable_entry_detail, name='tds_receivable_entry_detail'),
-    # path('tds-payable-entries/', views.list_tds_payable_entries, name='list_tds_payable_entries'),
-    # path('tds-payable-entries/add/', views.add_tds_payable_entry, name='add_tds_payable_entry'),
-    # path('tds-payable-entries/<int:pk>/', views.tds_payable_entry_detail, name='tds_payable_entry_detail'),
-    # path('tax-payable-entries/', views.list_tax_payable_entries, name='list_tax_payable_entries'),
-    # path('tax-payable-entries/add/', views.add_tax_payable_entry, name='add_tax_payable_entry'),
-    # path('tax-payable-entries/<int:pk>/', views.tax_payable_entry_detail, name='tax_payable_entry_detail'),
-    # path('tax-receivable-entries/', views.list_tax_receivable_entries, name='list_tax_receivable_entries'),
-    # path('tax-receivable-entries/add/', views.add_tax_receivable_entry, name='add_tax_receivable_entry'),
-    # path('tax-receivable-entries/<int:pk>/', views.tax_receivable_entry_detail, name='tax_receivable_entry_detail'),
-    
+        
     path('current-liability-entries/', views.list_current_liability_entries, name='list_current_liability_entries'),
     path('current-liability-entries/add/', views.add_current_liability_entry, name='add_current_liability_entry'),
     path('current-liability-entries/<int:pk>/', views.current_liability_entry_detail, name='current_liability_entry_detail'),
@@ -55,7 +43,6 @@ urlpatterns = [
     path('capital-entries/<int:pk>/', views.capital_entry_detail, name='capital-entry-detail'),
     path('balance-sheet/', balance_sheet, name='balance sheet'),
     
-    
     path('gst-purchase-with-hsn/', gst_purchase_with_hsn, name='gst_purchase_with_hsn'),
     path('gst-sales-with-hsn/', gst_sales_with_hsn, name='gst_sales_with_hsn'),
     path('purchase-summary/', purchase_summary, name='purchase_summary'),
@@ -73,5 +60,6 @@ urlpatterns = [
     path('audit-trial/', audit_trial, name='audit_trial'),
     path('gstr-3b/', gstr_3b, name='gstr-3b'),
    
+
 ]
 

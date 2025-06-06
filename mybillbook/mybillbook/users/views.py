@@ -1,7 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated,AllowAny
-from .models import Business, Role,User,SubscriptionPlan,Subscription,StaffInvite,AuditLog
+from .models import Business, Role,User,SubscriptionPlan,Subscription,StaffInvite,AuditLog,TrialSubscription
 from rest_framework import status
 import random
 from rest_framework.generics import RetrieveUpdateDestroyAPIView
@@ -16,6 +16,18 @@ from .permissions import IsBusinessAdmin,generate_permissions,activate_subscript
 from .utils import get_current_business,has_subscription_feature,has_feature,has_permission,is_rate_limited,log_action
 from .models import INDIAN_STATES , BUSINESS_TYPES, INDUSTRY_TYPES, REGISTRATION_TYPES
 import logging
+from django.utils import timezone
+from datetime import timedelta
+from django.core.exceptions import ValidationError
+from django.db import transaction
+from .subscription_utils import (
+    create_trial_subscription,
+    validate_business_subscription,
+    validate_user_access,
+    check_trial_limits,
+    handle_expired_subscription,
+    validate_new_user_registration
+)
 
 
 class MeView(APIView):
@@ -47,13 +59,25 @@ class CreateBusinessView(APIView):
     def post(self, request):
         serializer = BusinessSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            business = serializer.save(owner=request.user)
-            log_action(request.user, business, "business_created", {"name": business.name})
-            # ✅ Set current business in cache
-            request.user.current_business = business
-            request.user.save()
-         
-            return Response({"message": "Business created", "business": serializer.data}, status=201)
+            try:
+                with transaction.atomic():
+                    business = serializer.save(owner=request.user)
+                    log_action(request.user, business, "business_created", {"name": business.name})
+                    
+                    # Create trial subscription for new business
+                    trial = create_trial_subscription(business, request.user)
+                    
+                    # Set current business
+                    request.user.current_business = business
+                    request.user.save()
+                
+                return Response({
+                    "message": "Business created with trial subscription",
+                    "business": serializer.data,
+                    "trial_end_date": trial.end_date
+                }, status=201)
+            except ValidationError as e:
+                return Response({"error": str(e)}, status=400)
         return Response(serializer.errors, status=400)
 
 class BusinessDetailView(RetrieveUpdateDestroyAPIView):
@@ -170,45 +194,68 @@ class VerifyUnifiedOTPView(APIView):
         if not mobile or not otp:
             return Response({"error": "Mobile and OTP required"}, status=400)
 
-        # 1. Validate OTP
+        # Validate OTP
         cached_otp = cache.get(f'otp_{mobile}')
         if otp != cached_otp:
             return Response({"error": "Invalid or expired OTP"}, status=400)
 
-        # 2. Get or create user
+        # Get or create user
         user, created = User.objects.get_or_create(mobile=mobile)
 
-        # 3. Check staff invite
+        # Check staff invite
         invite = StaffInvite.objects.filter(mobile=mobile, status='pending').first()
         if invite:
-            if not user.name:  # only set name if user doesn't have one
+            if not user.name:
                 user.name = invite.name
-            # ✅ Set current business for staff
+            
+            # Validate business subscription before adding staff
+            if not validate_business_subscription(invite.business):
+                return Response({
+                    "error": "Business subscription has expired. Please contact the business owner."
+                }, status=403)
+
+            # Check trial limits
+            is_within_limits, limit_message = check_trial_limits(invite.business)
+            if not is_within_limits:
+                return Response({"error": limit_message}, status=403)
+
             user.current_business = invite.business
             user.save(update_fields=["current_business", "name"])
+            
             Role.objects.get_or_create(
                 user=user,
                 business=invite.business,
                 role_name=invite.role_name,
                 defaults={"permissions": generate_permissions(invite.role_name)}
             )
+            
             invite.status = 'accepted'
             invite.save()
 
-        # 4. Delete OTP from cache
+            log_action(
+                user,
+                invite.business,
+                "staff_joined",
+                {
+                    "name": user.name,
+                    "mobile": user.mobile,
+                    "role_name": invite.role_name,
+                    "business_name": invite.business.name
+                }
+            )
+
+        # Delete OTP from cache
         cache.delete(f'otp_{mobile}')
 
-        # 5. Generate token
+        # Generate token
         refresh = RefreshToken.for_user(user)
 
-        # 6. Return token + list of businesses
+        # Get businesses and roles
         owned = Business.objects.filter(owner=user)
         member = Business.objects.filter(role__user=user)
         all_businesses = (owned | member).distinct()
-
         biz_serializer = BusinessSerializer(all_businesses, many=True)
 
-        # 7. Get roles
         role_data = [
             {
                 "business_id": role.business.id,
@@ -218,13 +265,18 @@ class VerifyUnifiedOTPView(APIView):
             for role in Role.objects.filter(user=user)
         ]
 
-        # 8. Log the login
-        log_action(
-            user,
-            invite.business if invite else None,
-            "login",
-            {"type": "staff" if invite else "admin"}
-        )
+        # Log the login
+        current_business = invite.business if invite else user.current_business
+        if current_business:
+            log_action(
+                user,
+                current_business,
+                "login",
+                {
+                    "type": "staff" if invite or Role.objects.filter(user=user, business=current_business).exists() else "admin",
+                    "business_name": current_business.name
+                }
+            )
 
         return Response({
             "message": "Login successful",
@@ -280,7 +332,7 @@ class ListStaffView(APIView):
                 "permissions": role.permissions
             })
 
-        # 🕒 Pending Invites (who haven’t joined yet)
+        # 🕒 Pending Invites (who haven't joined yet)
         pending_invites = StaffInvite.objects.filter(business=business, status='pending').exclude(mobile__in=joined_user_mobiles)
 
         for invite in pending_invites:
@@ -294,6 +346,71 @@ class ListStaffView(APIView):
             })
 
         return Response({"staff": staff})
+
+class ManagePendingInviteView(APIView):
+    permission_classes = [IsAuthenticated, IsBusinessAdmin]
+    
+    def get(self, request):
+        mobile = request.query_params.get("mobile")
+        if not mobile:
+            return Response({"error": "Mobile is required"}, status=400)
+
+        business = get_current_business(request.user)
+
+        try:
+            invite = StaffInvite.objects.get(mobile=mobile, business=business, status='pending')
+            return Response({
+                "name": invite.name,
+                "mobile": invite.mobile,
+                "role_name": invite.role_name,
+                "business_id": invite.business_id,
+                "status": invite.status,
+            })
+        except StaffInvite.DoesNotExist:
+            return Response({"error": "Pending invite not found"}, status=404)
+
+    def patch(self, request):
+        mobile = request.data.get("mobile")
+        if not mobile:
+            return Response({"error": "Mobile is required"}, status=400)
+
+        business = get_current_business(request.user)
+
+        try:
+            invite = StaffInvite.objects.get(mobile=mobile, business=business, status='pending')
+        except StaffInvite.DoesNotExist:
+            return Response({"error": "Pending invite not found"}, status=404)
+
+        # Update fields if they are provided
+        updated_fields = []
+        if "name" in request.data:
+            invite.name = request.data["name"]
+            updated_fields.append("name")
+        if "role_name" in request.data:
+            new_role = request.data["role_name"]
+            if new_role not in dict(Role.ROLE_CHOICES):
+                return Response({"error": "Invalid role"}, status=400)
+            invite.role_name = new_role
+            updated_fields.append("role_name")
+
+        if updated_fields:
+            invite.save(update_fields=updated_fields)
+            return Response({"message": "Pending invite updated", "updated_fields": updated_fields})
+        else:
+            return Response({"message": "No fields to update"})
+
+
+    def delete(self, request):
+        mobile = request.data.get("mobile")
+        if not mobile:
+            return Response({"error": "Mobile is required"}, status=400)
+
+        business = get_current_business(request.user)
+        deleted, _ = StaffInvite.objects.filter(mobile=mobile, business=business, status='pending').delete()
+
+        if deleted:
+            return Response({"message": "Pending invite deleted"})
+        return Response({"error": "No matching pending invite found"}, status=404)
 
 class ResendStaffInviteView(APIView):
     permission_classes = [IsAuthenticated, IsBusinessAdmin]
@@ -339,37 +456,132 @@ class UpdateStaffView(APIView):
             "role": role.role_name,
             "permissions": role.permissions,
             "is_removed": getattr(role, "is_removed", False),
+            "is_permanently_removed": getattr(role, "is_permanently_removed", False),
             "business_id": role.business.id
         }
         return Response(data)
 
     def patch(self, request, user_id):
-        new_role = request.data.get("role_name")
-        if new_role not in dict(Role.ROLE_CHOICES):
-            return Response({"error": "Invalid role"}, status=400)
-
         business = get_current_business(request.user)
+
         try:
-            role = Role.objects.get(user__id=user_id, business=business)
+            role = Role.objects.select_related("user").get(user__id=user_id, business=business)
         except Role.DoesNotExist:
             return Response({"error": "Staff not found in your business"}, status=404)
 
-        role.role_name = new_role
-        role.permissions = generate_permissions(new_role)
+        user = role.user
+
+        # Update name
+        name = request.data.get("name")
+        if name:
+            user.name = name
+
+        # Update mobile
+        mobile = request.data.get("mobile")
+        if mobile:
+            user.mobile = mobile
+
+        # Update role and permissions
+        new_role_name = request.data.get("role_name")
+        if new_role_name:
+            if new_role_name not in dict(Role.ROLE_CHOICES):
+                return Response({"error": "Invalid role"}, status=400)
+            role.role_name = new_role_name
+            role.permissions = generate_permissions(new_role_name)
+
+        # Save changes
+        user.save(update_fields=["name", "mobile"])
         role.save()
 
-        return Response({"message": "Staff role updated"})
+        return Response({"message": "Staff details updated"})
 
     def delete(self, request, user_id):
         business = get_current_business(request.user)
         try:
-            role = Role.objects.get(user__id=user_id, business=business)
+            role = Role.objects.select_related('user').get(user__id=user_id, business=business)
         except Role.DoesNotExist:
             return Response({"error": "Staff not found in your business"}, status=404)
 
-        role.is_removed = True
-        role.save(update_fields=["is_removed"])
-        return Response({"message": "Staff removed (soft deleted)"})
+        # Check if permanent removal is requested
+        permanent = request.query_params.get('permanent', 'false').lower() == 'true'
+        
+        if permanent:
+            # Get the user before deleting the role
+            user = role.user
+            
+            # If this was their current business, clear it
+            if user.current_business == business:
+                user.current_business = None
+                user.save(update_fields=['current_business'])
+            
+            # Delete any pending invites for this user and business
+            StaffInvite.objects.filter(
+                mobile=user.mobile,
+                business=business,
+                status='pending'
+            ).delete()
+            
+            # Actually delete the role from database
+            role.delete()
+            
+            log_action(
+                request.user,
+                business,
+                "staff_permanently_removed",
+                {
+                    "name": user.name,
+                    "mobile": user.mobile,
+                    "role_name": role.role_name
+                }
+            )
+            
+            return Response({"message": "Staff permanently removed"})
+        else:
+            # Soft delete
+            role.is_removed = True
+            role.save(update_fields=["is_removed"])
+            return Response({"message": "Staff removed (soft deleted)"})
+
+class ReinviteStaffView(APIView):
+    permission_classes = [IsAuthenticated, IsBusinessAdmin]
+
+    def post(self, request, user_id):
+        business = get_current_business(request.user)
+        try:
+            role = Role.objects.select_related("user").get(
+                user__id=user_id, 
+                business=business,
+                is_removed=True,
+                is_permanently_removed=False
+            )
+        except Role.DoesNotExist:
+            return Response({"error": "Staff not found or cannot be reinvited"}, status=404)
+
+        # Create new staff invite
+        StaffInvite.objects.create(
+            business=business,
+            mobile=role.user.mobile,
+            name=role.user.name,
+            role_name=role.role_name,
+            invited_by=request.user,
+            status='pending'
+        )
+
+        # Delete the old role
+        role.delete()
+
+        log_action(
+            request.user,
+            business,
+            "staff_reinvited",
+            {
+                "name": role.user.name,
+                "mobile": role.user.mobile,
+                "role_name": role.role_name
+            }
+        )
+
+        return Response({"message": "Staff reinvited successfully"})
 
 class CurrentBusinessView(APIView):
     permission_classes = [IsAuthenticated]
@@ -449,61 +661,205 @@ class SwitchBusinessView(APIView):
         except Business.DoesNotExist:
             return Response({"error": "Business not found"}, status=404)
 
+class ListPlansView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        plans = SubscriptionPlan.objects.filter(is_active=True)
+        serializer = SubscriptionPlanSerializer(plans, many=True)
+        return Response(serializer.data)
+
 class SubscribeBusinessView(APIView):
-    permission_classes = [IsAuthenticated, IsBusinessAdmin]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        plan_id = request.data.get("plan_id")
-        business = get_current_business(request.user)
-
-        if not business:
-            return Response({"error": "No active business"}, status=400)
-
+        plan_id = request.data.get('plan_id')
         try:
             plan = SubscriptionPlan.objects.get(id=plan_id)
+            business = request.user.current_business
+
+            if not business:
+                return Response(
+                    {'error': 'No active business selected'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Check for existing active subscription
+            existing_subscription = Subscription.objects.filter(
+                business=business,
+                is_active=True
+            ).first()
+
+            # Check for active trial
+            trial_sub = TrialSubscription.objects.filter(
+                business=business,
+                is_active=True,
+                end_date__gt=timezone.now()
+            ).first()
+
+            with transaction.atomic():
+                # Deactivate trial if exists
+                if trial_sub:
+                    trial_sub.is_active = False
+                    trial_sub.save()
+
+                if existing_subscription:
+                    # Update existing subscription
+                    existing_subscription.plan = plan
+                    existing_subscription.start_date = timezone.now()
+                    existing_subscription.end_date = timezone.now() + timedelta(days=30)  # Assuming monthly subscription
+                    existing_subscription.is_trial = plan.is_trial
+                    existing_subscription.save()
+                    subscription = existing_subscription
+                else:
+                    # Create new subscription if none exists
+                    subscription = Subscription.objects.create(
+                        business=business,
+                        plan=plan,
+                        start_date=timezone.now(),
+                        end_date=timezone.now() + timedelta(days=30),  # Assuming monthly subscription
+                        is_trial=plan.is_trial
+                    )
+
+            serializer = SubscriptionSerializer(subscription)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
         except SubscriptionPlan.DoesNotExist:
-            return Response({"error": "Plan not found"}, status=404)
-
-        subscription = activate_subscription(business, plan)
-        log_action(request.user, business, "subscription_activated", {"plan": plan.name})
-
-        return Response({"message": "Subscription activated", "subscription": {
-            "plan": plan.name,
-            "start_date": subscription.start_date,
-            "end_date": subscription.end_date
-        }})
-
-class ListPlansView(APIView):
-    def get(self, request):
-        plans = SubscriptionPlan.objects.all()
-        serializer = SubscriptionPlanSerializer(plans, many=True)
-        return Response({"plans": serializer.data})
+            return Response(
+                {'error': 'Invalid plan'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 class CurrentSubscriptionView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        business = get_current_business(request.user)
+        business = request.user.current_business
+        
         if not business:
-            return Response({"error": "No active business"}, status=400)
+            return Response({
+                'error': 'No active business selected'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validate user access
+        has_access, error_message = validate_user_access(request.user, business)
+        if not has_access:
+            return Response({'error': error_message}, status=status.HTTP_403_FORBIDDEN)
 
-        try:
-            subscription = business.subscription
-        except Subscription.DoesNotExist:
-            return Response({"message": "No subscription found"}, status=404)
+        # Handle expired subscriptions
+        handle_expired_subscription(business)
+        
+        # Check for active subscription
+        subscription = Subscription.objects.filter(
+            business=business,
+            is_active=True,
+            end_date__gt=timezone.now()
+        ).first()
 
-        serializer = SubscriptionSerializer(subscription)
-        return Response({"subscription": serializer.data})
+        # If no active subscription, check for trial
+        if not subscription:
+            trial = TrialSubscription.objects.filter(
+                business=business,
+                is_active=True,
+                end_date__gt=timezone.now()
+            ).first()
+            
+            if trial:
+                return Response({
+                    'plan': 'Free Trial',
+                    'start_date': trial.start_date,
+                    'end_date': trial.end_date,
+                    'is_active': True,
+                    'is_trial': True
+                })
+
+        if subscription:
+            serializer = SubscriptionSerializer(subscription)
+            return Response(serializer.data)
+        
+        return Response({
+            'error': 'No active subscription found'
+        }, status=status.HTTP_404_NOT_FOUND)
+
+class CheckSubscriptionStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        business = request.user.current_business
+        
+        if not business:
+            return Response({
+                'error': 'No active business selected'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check for active subscription
+        subscription = Subscription.objects.filter(
+            business=business,
+            is_active=True,
+            end_date__gt=timezone.now()
+        ).first()
+
+        # Check for active trial
+        trial = TrialSubscription.objects.filter(
+            business=business,
+            is_active=True,
+            end_date__gt=timezone.now()
+        ).first()
+
+        if subscription or trial:
+            return Response({'has_active_subscription': True})
+        
+        return Response({
+            'has_active_subscription': False,
+            'message': 'No active subscription found. Please subscribe to continue.'
+        })
+
+class CreateTrialSubscriptionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        business = request.user.current_business
+        
+        if not business:
+            return Response({
+                'error': 'No active business selected'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if business already has a trial
+        existing_trial = TrialSubscription.objects.filter(business=business).exists()
+        if existing_trial:
+            return Response({
+                'error': 'Trial subscription already used'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Create trial subscription
+        trial = TrialSubscription.objects.create(
+            business=business,
+            end_date=timezone.now() + timedelta(days=14)
+        )
+
+        return Response({
+            'message': 'Trial subscription created successfully',
+            'end_date': trial.end_date
+        }, status=status.HTTP_201_CREATED)
 
 class AuditLogListView(APIView):
     permission_classes = [IsAuthenticated, IsBusinessAdmin]
 
     def get(self, request):
-        business = get_current_business(request.user)
-        logs = AuditLog.objects.filter(business=business).order_by('-created_at')[:100]
+        try:
+            business = get_current_business(request.user)
+            if not business:
+                return Response({"error": "No active business found"}, status=400)
 
-        serializer = AuditLogSerializer(logs, many=True)
-        return Response({"logs": serializer.data})
+            logs = AuditLog.objects.filter(business=business).order_by('-created_at')[:100]
+            serializer = AuditLogSerializer(logs, many=True, context={'request': request})
+            
+            return Response({
+                "logs": serializer.data,
+                "total": logs.count()
+            })
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
 
 class AllAuditLogsView(APIView):
     permission_classes = [IsAuthenticated, IsSuperAdmin]

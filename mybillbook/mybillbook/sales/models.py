@@ -71,7 +71,7 @@ class Invoice(models.Model):
 )
 
     business = models.ForeignKey(Business, on_delete=models.CASCADE, blank=True , null=True, related_name='invoice')
-    invoice_no = models.CharField(max_length=50)
+    invoice_no = models.IntegerField()
     date = models.DateField(auto_now_add=False)
     party = models.ForeignKey(Party, on_delete=models.CASCADE, related_name='invoice')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Unpaid')
@@ -85,7 +85,6 @@ class Invoice(models.Model):
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES,  default='Cash', blank=True, null=True)
     discount = models.DecimalField(max_digits=5, decimal_places=2, default=0,blank=True , null=True, help_text="Discount in percentage.")
     notes = models.TextField(blank=True,null=True)
-    signature = models.ImageField(upload_to='static/images/', null=True, blank=True)
     bank_account = models.ForeignKey('cash_and_bank.BankAccount', on_delete=models.SET_NULL, null=True, blank=True, related_name='invoices')
     
     apply_tcs = models.BooleanField(default=False)
@@ -219,7 +218,7 @@ class Invoice(models.Model):
             if old_invoice.status == 'Unpaid':
                 self.reverse_unpaid_balance(total_amount)
             elif old_invoice.status == 'Partially Paid':
-                self.reverse_partially_paid_balance(balance_amount)
+                self.reverse_partially_paid_balance(balance_amount,received_amount)
             
         old_party = old_invoice.party
         if old_party != self.party:
@@ -237,15 +236,15 @@ class Invoice(models.Model):
             self.party.closing_balance += total_amount
         self.party.save()
 
-    def reverse_partially_paid_balance(self, received_amount):
-        # Reverse the partially paid logic impact based on previous payments
+    def reverse_partially_paid_balance(self, balance_amount,received_amount):
         if self.party.balance_type == 'To Collect':
-            self.party.closing_balance -= received_amount
+            self.party.closing_balance -= balance_amount
             if self.party.closing_balance < 0:
                 self.party.balance_type = 'To Pay'
                 self.party.closing_balance = abs(self.party.closing_balance)
         elif self.party.balance_type == 'To Pay':
-            self.party.closing_balance += received_amount
+            self.party.closing_balance += balance_amount
+            self.party.closing_balance -= received_amount
         self.party.save()
 
     def update_status(self):
@@ -265,7 +264,7 @@ class Invoice(models.Model):
             if self.tcs_on == 'total':
                 base_amount = self.get_total_amount(without_tcs=True)
             else:
-                base_amount = self.get_taxable_amount()
+                base_amount = self.get_tcs_taxable_amount()
 
             return (base_amount * rate / Decimal('100.00')).quantize(Decimal("0.00"), rounding=ROUND_HALF_UP)
 
@@ -284,7 +283,7 @@ class Invoice(models.Model):
 
         if not without_tcs and self.apply_tcs and self.tcs and self.business and self.business.tcs:
             rate = Decimal(str(self.tcs.rate or 0))
-            tcs_base = self.get_taxable_amount() if self.tcs_on == 'taxable' else total_amount
+            tcs_base = self.get_tcs_taxable_amount() if self.tcs_on == 'taxable' else total_amount
             self.tcs_amount = (tcs_base * rate / Decimal("100")).quantize(Decimal("0.00"), rounding=ROUND_HALF_UP)
             total_amount += self.tcs_amount
         else:
@@ -304,9 +303,15 @@ class Invoice(models.Model):
         # Use 0 if discount is None
         discount = self.discount if self.discount is not None else 0
         
-        if discount >= 0:
+        if discount > 0:
             discount_amount = total_amount * Decimal(discount / 100)  # Discount is a percentage
             total_amount -= discount_amount  # Subtract discount from total amount
+        
+        return total_amount
+    
+    def get_tcs_taxable_amount(self):
+        # Convert each price item to Decimal before summing
+        total_amount = sum(Decimal(item.get_taxable()) for item in self.invoice_items.all())
         
         return total_amount
     
@@ -347,6 +352,8 @@ class Invoice(models.Model):
     def delete(self, *args, **kwargs):
         # Handle necessary clean up before deleting the invoice or invoice item
         self.reverse_previous_balance_impact()  # Example: Reverse balance impact for the party
+        for item in self.invoice_items.all():
+            item.delete()
         super().delete(*args, **kwargs)
 
     def make_payment(self, total_payment_amount, bank_account=None):
@@ -590,6 +597,26 @@ class InvoiceItem(models.Model):
                 total_amount -= discount_amount  # Subtract discount from total amount
             return round(total_amount, 2)       
         return 0.0  # If no item or service, return 0
+    
+    def get_taxable(self):
+        total_price = 0.0
+        if self.item:
+            # Handle item price calculation based on sales type
+            if self.item.salesPriceType == "With Tax":
+                price_without_tax = self.calculate_price(self.item.salesPrice, "With Tax")
+                total_price = price_without_tax * self.quantity
+            else:
+                total_price = self.item.salesPrice * self.quantity  # Already tax-exclusive
+        elif self.service:
+            # Handle service price calculation based on sales type
+            if self.service.salesPriceType == "With Tax":
+                price_without_tax = self.calculate_price(self.service.salesPrice, "With Tax")
+                total_price = price_without_tax * self.quantity
+            else:
+                total_price = self.service.salesPrice * self.quantity
+        # Return the final price, rounded to two decimal places
+        return round(total_price, 2)
+
 
     def get_price_item(self):
         """Returns the price of the item or service (excluding tax), applying discounts if any."""
@@ -628,19 +655,7 @@ class InvoiceItem(models.Model):
     def get_available_stock(self):
         """Returns the remaining stock for products. For services, stock is not managed."""
         if self.item:
-            # Create a unique cache key for each item
-            cache_key = f'item_{self.item.id}_stock_{self.quantity}'  # Include quantity in the key to handle dynamic changes
-            available_stock = cache.get(cache_key)  # Check if the result is cached
-            if available_stock is None:  # Cache miss - calculate available stock
-                if self.item.closingStock >= self.quantity:
-                    available_stock = self.item.closingStock - self.quantity
-                else:
-                    available_stock = 0  # Out-of-stock for products
-                # Store the result in cache for 15 minutes (adjustable)
-                cache.set(cache_key, available_stock)
-            if available_stock <= 0:
-                raise ValidationError(f"Not enough stock for {self.item.itemName}. Available stock: {self.item.closingStock}")
-            return available_stock
+            return self.item.closingStock
         return None  # Services don't have stock management
 
     def save(self, *args, **kwargs):
@@ -649,19 +664,7 @@ class InvoiceItem(models.Model):
         if self.item:
             self.unit_price = self.item.salesPrice  # For products
             self.price_item = self.item.salesPrice  # Price of item before tax
-            # Check if sufficient stock is available and update
-            available_stock = self.get_available_stock()
-            if available_stock >= 0:
-                self.item.closingStock = available_stock
-                self.item.save()  # Persist the updated stock to the database
-                # Invalidate the cache for this item
-                cache_key = f'item_{self.item.id}_stock'
-                cache.delete(cache_key)  # Clear the old cached value
-                # Optionally, you could also update the cache with the new stock value
-                cache.set(cache_key, self.item.closingStock)
-            else:
-                raise ValidationError("Not enough stock available.")
-            
+            # Stock management is now handled by the serializer
         elif self.service:
             self.unit_price = self.service.salesPrice  # For services
             self.price_item = self.service.salesPrice  # Service price before tax
@@ -669,6 +672,14 @@ class InvoiceItem(models.Model):
 
         super().save(*args, **kwargs)
 
+    def delete(self, *args, **kwargs):
+        # Handle necessary clean up before deleting the invoice or invoice item
+        print("""Reverse stock when item is deleted 1.""")
+        item = self.item
+        if item:
+            item.closingStock += self.quantity
+            item.save()
+        super().delete(*args, **kwargs)
 
     def __str__(self):
         if self.item:
@@ -685,7 +696,7 @@ class Quotation(models.Model):
     )
     
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='quotation')
-    quotation_no = models.CharField(max_length=50)
+    quotation_no = models.IntegerField()
     date = models.DateField(auto_now_add=False)  
     party = models.ForeignKey(Party, on_delete=models.CASCADE)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES,default='Open')
@@ -695,7 +706,7 @@ class Quotation(models.Model):
     due_date = models.DateField(blank=True, null=True)
     discount = models.DecimalField(max_digits=5, decimal_places=2, default=0,blank=True , null=True, help_text="Discount in percentage.")
     notes = models.TextField(blank=True,null=True)
-    signature = models.ImageField(upload_to='static/signature/', null=True, blank=True)
+
     
     def save(self, *args, **kwargs):
         # Calculate due_date if payment_term is provided
@@ -930,6 +941,25 @@ class QuotationItem(models.Model):
                 total_amount -= discount_amount  # Subtract discount from total amount
             return round(total_amount, 2)       
         return 0.0  # If no item or service, return 0
+    
+    def get_taxable(self):
+        total_price = 0.0
+        if self.item:
+            # Handle item price calculation based on sales type
+            if self.item.salesPriceType == "With Tax":
+                price_without_tax = self.calculate_price(self.item.salesPrice, "With Tax")
+                total_price = price_without_tax * self.quantity
+            else:
+                total_price = self.item.salesPrice * self.quantity  # Already tax-exclusive
+        elif self.service:
+            # Handle service price calculation based on sales type
+            if self.service.salesPriceType == "With Tax":
+                price_without_tax = self.calculate_price(self.service.salesPrice, "With Tax")
+                total_price = price_without_tax * self.quantity
+            else:
+                total_price = self.service.salesPrice * self.quantity
+        # Return the final price, rounded to two decimal places
+        return round(total_price, 2)
 
     def get_price_item(self):
         """Returns the price of the item or service (excluding tax), applying discounts if any."""
@@ -1021,7 +1051,7 @@ class PaymentIn(models.Model):
     party = models.ForeignKey(Party, on_delete=models.CASCADE)
     date = models.DateField(default=now)
     payment_mode = models.CharField(max_length=100, choices=PAYMENT_MODE)
-    payment_in_number = models.CharField(max_length=50)
+    payment_in_number = models.IntegerField()
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     notes = models.TextField(blank=True, null=True)
     bank_account = models.ForeignKey(
@@ -1111,7 +1141,7 @@ class SalesReturn(models.Model):
 
     
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='salesreturn')
-    salesreturn_no = models.CharField(max_length=50)
+    salesreturn_no = models.IntegerField()
     date = models.DateField(auto_now_add=False)
     party = models.ForeignKey(Party, on_delete=models.CASCADE)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Unpaid')
@@ -1124,7 +1154,6 @@ class SalesReturn(models.Model):
     discount = models.DecimalField(max_digits=5, decimal_places=2, default=0,blank=True , null=True, help_text="Discount in percentage.")
     bank_account = models.ForeignKey('cash_and_bank.BankAccount', on_delete=models.SET_NULL, null=True, blank=True, related_name='salesreturn')
     notes = models.TextField(blank=True,null=True)
-    signature = models.ImageField(upload_to='static/images/', null=True, blank=True)
     invoice_id = models.PositiveIntegerField()
     invoice_no = models.PositiveIntegerField(blank=True,null=True)
 
@@ -1145,7 +1174,7 @@ class SalesReturn(models.Model):
         self.balance_amount = self.get_balance_amount()
         self.tcs_amount = self.get_tcs_amount()
         # If any specific fields are updated, use `update_fields` to save only those fields
-        super().save(update_fields=['status', 'amount_received', 'total_amount','balance_amount','invoice_no','party','business','invoice_id' ,'payment_method', 'is_fully_paid', 'notes', 'discount', 'signature','tcs_amount','tcs','apply_tcs', 'taxable_amount','bank_account','salesreturn_no','date'])
+        super().save(update_fields=['status', 'amount_received', 'total_amount','balance_amount','invoice_no','party','business','invoice_id' ,'payment_method', 'is_fully_paid', 'notes', 'discount','tcs_amount','tcs','apply_tcs', 'taxable_amount','bank_account','salesreturn_no','date'])
 
     def create_invoice(self, *args, **kwargs):
         """Handles the creation of a new invoice."""
@@ -1287,7 +1316,7 @@ class SalesReturn(models.Model):
             if old_invoice.status == 'Unpaid':
                 self.reverse_unpaid_balance(total_amount)
             elif old_invoice.status == 'Partially Paid':
-                self.reverse_partially_paid_balance(balance_amount)
+                self.reverse_partially_paid_balance(balance_amount,received_amount)
             
         old_party = old_invoice.party
         if old_party != self.party:
@@ -1305,15 +1334,15 @@ class SalesReturn(models.Model):
             self.party.closing_balance += total_amount
         self.party.save()
 
-    def reverse_partially_paid_balance(self, received_amount):
-        # Reverse the partially paid logic impact based on previous payments
+    def reverse_partially_paid_balance(self, balance_amount,received_amount):
         if self.party.balance_type == 'To Collect':
-            self.party.closing_balance -= received_amount
+            self.party.closing_balance -= balance_amount
             if self.party.closing_balance < 0:
                 self.party.balance_type = 'To Pay'
                 self.party.closing_balance = abs(self.party.closing_balance)
         elif self.party.balance_type == 'To Pay':
-            self.party.closing_balance += received_amount
+            self.party.closing_balance += balance_amount
+            self.party.closing_balance -= received_amount
         self.party.save()
 
     def update_status(self):
@@ -1333,7 +1362,7 @@ class SalesReturn(models.Model):
             if self.tcs_on == 'total':
                 base_amount = self.get_total_amount(without_tcs=True)
             else:
-                base_amount = self.get_taxable_amount()
+                base_amount = self.get_tcs_taxable_amount()
 
             return (base_amount * rate / Decimal('100.00')).quantize(Decimal("0.00"), rounding=ROUND_HALF_UP)
 
@@ -1352,7 +1381,7 @@ class SalesReturn(models.Model):
 
         if not without_tcs and self.apply_tcs and self.tcs and self.business and self.business.tcs:
             rate = Decimal(str(self.tcs.rate or 0))
-            tcs_base = self.get_taxable_amount() if self.tcs_on == 'taxable' else total_amount
+            tcs_base = self.get_tcs_taxable_amount() if self.tcs_on == 'taxable' else total_amount
             self.tcs_amount = (tcs_base * rate / Decimal("100")).quantize(Decimal("0.00"), rounding=ROUND_HALF_UP)
             total_amount += self.tcs_amount
         else:
@@ -1375,6 +1404,13 @@ class SalesReturn(models.Model):
         if discount >= 0:
             discount_amount = total_amount * Decimal(discount / 100)  # Discount is a percentage
             total_amount -= discount_amount  # Subtract discount from total amount
+        
+        return total_amount
+    
+    def get_tcs_taxable_amount(self):
+        # Convert each price item to Decimal before summing
+        total_amount = sum(Decimal(item.get_taxable()) for item in self.salesreturn_items.all())
+        
         
         return total_amount
     
@@ -1612,6 +1648,25 @@ class SalesReturnItem(models.Model):
 
             return round(total_amount, 2)  # Return the final amount, rounded to two decimal places
         return  0.0
+    
+    def get_taxable(self):
+        total_price = 0.0
+        if self.item:
+            # Handle item price calculation based on sales type
+            if self.item.salesPriceType == "With Tax":
+                price_without_tax = self.calculate_price(self.item.salesPrice, "With Tax")
+                total_price = price_without_tax * self.quantity
+            else:
+                total_price = self.item.salesPrice * self.quantity  # Already tax-exclusive
+        elif self.service:
+            # Handle service price calculation based on sales type
+            if self.service.salesPriceType == "With Tax":
+                price_without_tax = self.calculate_price(self.service.salesPrice, "With Tax")
+                total_price = price_without_tax * self.quantity
+            else:
+                total_price = self.service.salesPrice * self.quantity
+        # Return the final price, rounded to two decimal places
+        return round(total_price, 2)
 
     def get_price_item(self):
         """Returns the price of the item or service (excluding tax), applying discounts if any."""
@@ -1719,7 +1774,7 @@ class CreditNote(models.Model):
     )
     
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='creditnote')
-    credit_note_no = models.CharField(max_length=50)
+    credit_note_no = models.IntegerField()
     date = models.DateField(auto_now_add=False)
     party = models.ForeignKey(Party, on_delete=models.CASCADE)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Unpaid')
@@ -1731,7 +1786,6 @@ class CreditNote(models.Model):
     discount = models.DecimalField(max_digits=5, decimal_places=2, default=0,blank=True , null=True, help_text="Discount in percentage.")
     bank_account = models.ForeignKey('cash_and_bank.BankAccount', on_delete=models.SET_NULL, null=True, blank=True, related_name='creditnote')
     notes = models.TextField(blank=True,null=True)
-    signature = models.ImageField(upload_to='static/images/', null=True, blank=True)
     salesreturn_id = models.PositiveIntegerField()
     salesreturn_no = models.PositiveIntegerField(blank=True,null=True)
     
@@ -1754,7 +1808,8 @@ class CreditNote(models.Model):
         self.taxable_amount = self.get_taxable_amount()
         self.balance_amount = self.get_balance_amount()
         self.tcs_amount = self.get_tcs_amount()
-        super().save(update_fields=['status', 'amount_received', 'total_amount','balance_amount', 'payment_method','salesreturn_no','salesreturn_id' ,'is_fully_paid', 'notes', 'discount', 'signature','tcs','apply_tcs','party','business','bank_account'])
+
+        super().save(update_fields=['status', 'amount_received', 'total_amount','balance_amount', 'payment_method','salesreturn_no','salesreturn_id' ,'is_fully_paid', 'notes', 'discount','tcs','apply_tcs','party','business','bank_account'])
 
     def create_invoice(self, *args, **kwargs):
         """Handles the creation of a new invoice."""
@@ -1767,13 +1822,13 @@ class CreditNote(models.Model):
             return  # or raise an exception
         self.salesreturn_no = salesreturn.salesreturn_no
         print(self.salesreturn_no)
-        # After saving the invoice, handle balance and payment status for the new invoice
-        if self.is_fully_paid:
-            self.handle_fully_paid()
-        elif self.amount_received > 0:
-            self.handle_partially_paid()
-        else:
-            self.handle_unpaid()
+        # # After saving the invoice, handle balance and payment status for the new invoice
+        # if self.is_fully_paid:
+        #     self.handle_fully_paid()
+        # elif self.amount_received > 0:
+        #     self.handle_partially_paid()
+        # else:
+        #     self.handle_unpaid()
 
         # Update the status of the invoice
         self.update_status()
@@ -1781,16 +1836,16 @@ class CreditNote(models.Model):
     def update_invoice(self, *args, **kwargs):
         """Handles updating an existing invoice."""
         print("old invoice -- 1")
-        # Reverse previous balance impact when updating an existing invoice
-        self.reverse_previous_balance_impact()
+       # # Reverse previous balance impact when updating an existing invoice
+        # self.reverse_previous_balance_impact()
 
-        # Handle balance and payment status based on current state
-        if self.is_fully_paid:
-            self.handle_fully_paid()
-        elif self.amount_received > 0:
-            self.handle_partially_paid()
-        else:
-            self.handle_unpaid()
+         # Handle balance and payment status based on current state
+        # if self.is_fully_paid:
+        #     self.handle_fully_paid()
+        # elif self.amount_received > 0:
+        #     self.handle_partially_paid()
+        # else:
+        #     self.handle_unpaid()
 
         # Update the status of the invoice
         self.update_status()
@@ -1877,7 +1932,6 @@ class CreditNote(models.Model):
             print("Old invoice does not exist.")
             return
         
-
         # Case 1: Fully Paid - No impact to reverse
         if old_invoice.status == 'Paid':
             return
@@ -1897,7 +1951,7 @@ class CreditNote(models.Model):
             if old_invoice.status == 'Unpaid':
                 self.reverse_unpaid_balance(total_amount)
             elif old_invoice.status == 'Partially Paid':
-                self.reverse_partially_paid_balance(balance_amount)
+                self.reverse_partially_paid_balance(balance_amount,received_amount)
             
         old_party = old_invoice.party
         if old_party != self.party:
@@ -1915,15 +1969,15 @@ class CreditNote(models.Model):
             self.party.closing_balance += total_amount
         self.party.save()
 
-    def reverse_partially_paid_balance(self, received_amount):
-        print("Reverse the partially paid logic impact based on previous payments")
-        if self.party.balance_type == 'To Pay':
-            self.party.closing_balance -= received_amount
+    def reverse_partially_paid_balance(self, balance_amount,received_amount):
+        if self.party.balance_type == 'To Collect':
+            self.party.closing_balance -= balance_amount
             if self.party.closing_balance < 0:
-                self.party.balance_type = 'To Collect'
+                self.party.balance_type = 'To Pay'
                 self.party.closing_balance = abs(self.party.closing_balance)
-        elif self.party.balance_type == 'To Collect':
-            self.party.closing_balance += received_amount
+        elif self.party.balance_type == 'To Pay':
+            self.party.closing_balance += balance_amount
+            self.party.closing_balance -= received_amount
         self.party.save()
 
     def update_status(self):
@@ -1943,7 +1997,7 @@ class CreditNote(models.Model):
             if self.tcs_on == 'total':
                 base_amount = self.get_total_amount(without_tcs=True)
             else:
-                base_amount = self.get_taxable_amount()
+                base_amount = self.get_tcs_taxable_amount()
 
             return (base_amount * rate / Decimal('100.00')).quantize(Decimal("0.00"), rounding=ROUND_HALF_UP)
 
@@ -1961,7 +2015,7 @@ class CreditNote(models.Model):
 
         if not without_tcs and self.apply_tcs and self.tcs and self.business and self.business.tcs:
             rate = Decimal(str(self.tcs.rate or 0))
-            tcs_base = self.get_taxable_amount() if self.tcs_on == 'taxable' else total_amount
+            tcs_base = self.get_tcs_taxable_amount() if self.tcs_on == 'taxable' else total_amount
             self.tcs_amount = (tcs_base * rate / Decimal("100")).quantize(Decimal("0.00"), rounding=ROUND_HALF_UP)
             total_amount += self.tcs_amount
         else:
@@ -1988,6 +2042,13 @@ class CreditNote(models.Model):
             total_amount -= discount_amount  # Subtract discount from total amount
         
         return total_amount
+    
+    def get_tcs_taxable_amount(self):
+        # Convert each price item to Decimal before summing
+        total_amount = sum(Decimal(item.get_taxable()) for item in self.creditnote_items.all())
+        
+        return total_amount
+    
     
     def transfer_balance_to_new_party(self, old_party,balance_amount):
         new_party = self.party  # The new party to receive the amount
@@ -2212,6 +2273,25 @@ class CreditNoteItem(models.Model):
                 total_amount -= discount_amount  # Subtract discount from total amount
             return round(total_amount, 2)       
         return 0.0  # If no item or service, return 0
+    
+    def get_taxable(self):
+        total_price = 0.0
+        if self.item:
+            # Handle item price calculation based on sales type
+            if self.item.salesPriceType == "With Tax":
+                price_without_tax = self.calculate_price(self.item.salesPrice, "With Tax")
+                total_price = price_without_tax * self.quantity
+            else:
+                total_price = self.item.salesPrice * self.quantity  # Already tax-exclusive
+        elif self.service:
+            # Handle service price calculation based on sales type
+            if self.service.salesPriceType == "With Tax":
+                price_without_tax = self.calculate_price(self.service.salesPrice, "With Tax")
+                total_price = price_without_tax * self.quantity
+            else:
+                total_price = self.service.salesPrice * self.quantity
+        # Return the final price, rounded to two decimal places
+        return round(total_price, 2)
 
     def get_price_item(self):
         """Returns the price of the item or service (excluding tax), applying discounts if any."""
@@ -2305,7 +2385,7 @@ class DeliveryChallan(models.Model):
     )
     
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='deliverychallan')
-    delivery_challan_no = models.CharField(max_length=50)
+    delivery_challan_no = models.IntegerField()
     date = models.DateField(auto_now_add=False)  
     party = models.ForeignKey(Party, on_delete=models.CASCADE)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='Open')
@@ -2315,7 +2395,7 @@ class DeliveryChallan(models.Model):
     due_date= models.DateField(blank=True,null=True, auto_now=False, auto_now_add=False)
     discount = models.DecimalField(max_digits=5, decimal_places=2, default=0,blank=True , null=True, help_text="Discount in percentage.")
     notes = models.TextField(blank=True,null=True)
-    signature = models.ImageField(upload_to='static/signature/', null=True, blank=True)
+
     
     def save(self, *args, **kwargs):
         # Calculate due_date if payment_term is provided
@@ -2549,6 +2629,25 @@ class DeliveryChallanItem(models.Model):
                 total_amount -= discount_amount  # Subtract discount from total amount
             return round(total_amount, 2)       
         return 0.0  # If no item or service, return 0
+    
+    def get_taxable(self):
+        total_price = 0.0
+        if self.item:
+            # Handle item price calculation based on sales type
+            if self.item.salesPriceType == "With Tax":
+                price_without_tax = self.calculate_price(self.item.salesPrice, "With Tax")
+                total_price = price_without_tax * self.quantity
+            else:
+                total_price = self.item.salesPrice * self.quantity  # Already tax-exclusive
+        elif self.service:
+            # Handle service price calculation based on sales type
+            if self.service.salesPriceType == "With Tax":
+                price_without_tax = self.calculate_price(self.service.salesPrice, "With Tax")
+                total_price = price_without_tax * self.quantity
+            else:
+                total_price = self.service.salesPrice * self.quantity
+        # Return the final price, rounded to two decimal places
+        return round(total_price, 2)
 
     def get_price_item(self):
         """Returns the price of the item or service (excluding tax), applying discounts if any."""
@@ -2633,7 +2732,7 @@ class Proforma(models.Model):
     )
     
     business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='proforma')
-    proforma_no = models.CharField(max_length=50)
+    proforma_no = models.IntegerField()
     date = models.DateField(auto_now_add=False)  
     party = models.ForeignKey(Party, on_delete=models.CASCADE)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='Open')
@@ -2643,7 +2742,7 @@ class Proforma(models.Model):
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.0, help_text="Total Amount")
     discount = models.DecimalField(max_digits=5, decimal_places=2, default=0,blank=True , null=True, help_text="Discount in percentage.")
     notes = models.TextField(blank=True,null=True)
-    signature = models.ImageField(upload_to='static/signature/', null=True, blank=True)
+   
     
     def save(self, *args, **kwargs):
         # Calculate due_date if payment_term is provided
@@ -2878,6 +2977,25 @@ class ProformaItem(models.Model):
                 total_amount -= discount_amount  # Subtract discount from total amount
             return round(total_amount, 2)       
         return 0.0  # If no item or service, return 0
+    
+    def get_taxable(self):
+        total_price = 0.0
+        if self.item:
+            # Handle item price calculation based on sales type
+            if self.item.salesPriceType == "With Tax":
+                price_without_tax = self.calculate_price(self.item.salesPrice, "With Tax")
+                total_price = price_without_tax * self.quantity
+            else:
+                total_price = self.item.salesPrice * self.quantity  # Already tax-exclusive
+        elif self.service:
+            # Handle service price calculation based on sales type
+            if self.service.salesPriceType == "With Tax":
+                price_without_tax = self.calculate_price(self.service.salesPrice, "With Tax")
+                total_price = price_without_tax * self.quantity
+            else:
+                total_price = self.service.salesPrice * self.quantity
+        # Return the final price, rounded to two decimal places
+        return round(total_price, 2)
 
     def get_price_item(self):
         """Returns the price of the item or service (excluding tax), applying discounts if any."""

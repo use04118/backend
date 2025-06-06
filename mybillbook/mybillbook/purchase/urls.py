@@ -2,7 +2,7 @@ from django.urls import path
 from .views import PurchaseListCreateView, PurchaseDetailView, PurchaseListView, PurchaseReturnListCreateView,PurchaseReturnDetailView, PaymentOutListCreateView,PaymentOutDetailView,DebitNoteListCreateView, DebitNoteDetailView,PurchaseOrdersListCreateView, PurchaseOrdersDetailView,get_paid,get_unpaid,convert_purchaseorder_to_invoice 
 
 from .views import (
-   settled_purchase,get_next_purchase_debit_number,get_next_purchase_number,get_next_purchase_order_number,get_next_payment_out_number,get_next_purchase_return_number
+   settled_purchase,get_next_purchase_debit_number,get_next_purchase_number,get_next_purchase_order_number,get_next_payment_out_number,get_next_purchase_return_number, send_purchase_email_view,send_purchasereturn_email_view,send_debitnote_email_view,send_purchase_order_email_view, send_payment_out_email_view
 )
 
 urlpatterns = [
@@ -31,5 +31,11 @@ urlpatterns = [
     
     path('purchase/paid/', get_paid, name='get-paid'),
     path('purchase/unpaid/', get_unpaid, name='get-unpaid'),
-   
+
+    path('send-purchase-email/', send_purchase_email_view,name='send-purchase-email'),
+    path('send-purchasereturn-email/', send_purchasereturn_email_view, name='send-purchasereturn-email'),
+    path('send-debitnote-email/', send_debitnote_email_view, name='send-debitnote-email'),
+    path('send-purchase-order-email/', send_purchase_order_email_view, name='send-purchase_order-email'),
+    path('send-payment-out-email/', send_payment_out_email_view, name='send_payment_out_email'),
+
 ]

@@ -1,0 +1,26 @@
+2025-05-26T11:05:39.730430 |  Invoice  | ABC Corp|1 | email sent to bahoba9572@frisbook.com
+2025-05-26T11:06:27.912339 | Credit Note | ABC Corp | 1 | email sent to |bahoba9572@frisbook.com
+2025-05-26T13:14:21.441006 | Invoice | ABC Corp | 1 | email sent to bahoba9572@frisbook.com
+2025-05-26T13:30:40.462456 | Invoice | ABC Corp | 1 | email sent to bahoba9572@frisbook.com
+2025-05-26T13:40:45.067205 | Credit Note | ABC Corp | 1 | email sent to |bahoba9572@frisbook.com
+2025-05-26T13:45:37.915339 | Credit Note | ABC Corp | 1 | email sent to |bahoba9572@frisbook.com
+2025-05-26T15:01:26.895510 | Purchase | ABC Corp | 1 | email sent to bahoba9572@frisbook.com
+2025-05-26T15:02:12.068954 | Debit Note | ABC Corp | 1 | email sent to bahoba9572@frisbook.com
+2025-05-26T16:12:25.295384 | Debit Note | ABC Corp | 1 | email sent to bahoba9572@frisbook.com
+2025-05-26T16:32:19.787517 | Purchase | ABCD Pvt Ltd | 2 | email sent to bahoba9572@frisbook.com
+2025-05-26T17:01:12.371445 | Invoice | DEF Enterprises | 3 | email sent to def@enterprises.com
+2025-05-26T17:15:46.280162 | Invoice | HIJ Suppliers | 4 | email sent to bahoba9572@frisbook.com
+2025-05-27T12:48:37.506680 | Invoice | ABC Corp | 2 | email sent to kenom60459@daxiake.com
+2025-05-27T12:51:24.328033 | Invoice | ABC Corp | 2 | email sent to kenom60459@daxiake.com
+2025-05-27T12:58:10.325962 | Invoice | ABC Corp | 2 | email sent to kenom60459@daxiake.com
+2025-05-27T13:01:48.920840 | Invoice | ABC Corp | 2 | email sent to kenom60459@daxiake.com
+2025-05-27T13:05:02.135610 | Invoice | ABCD Pvt Ltd | 3 | email sent to kenom60459@daxiake.com
+2025-05-27T13:15:07.745786 | Invoice | ABCD Pvt Ltd | 2 | email sent to kenom60459@daxiake.com
+2025-05-27T13:26:20.088747 | Invoice | ABCD Pvt Ltd | 2 | email sent to kenom60459@daxiake.com
+2025-05-27T13:28:21.424009 | Invoice | ABCD Pvt Ltd | 2 | email sent to kenom60459@daxiake.com
+2025-05-27T13:31:17.023010 | Invoice | ABCD Pvt Ltd | 2 | email sent to kenom60459@daxiake.com
+2025-05-27T13:47:55.529820 | Invoice | ABC Corp | 3 | email sent to kenom60459@daxiake.com
+2025-05-27T13:50:59.966831 | Invoice | ABC Corp | 4 | email sent to kenom60459@daxiake.com
+2025-05-27T15:16:31.209260 | Credit Note | ABC Corp | 2 | email sent to kenom60459@daxiake.com
+2025-05-27T15:24:38.724117 | Purchase | ABC Corp | 1 | email sent to kenom60459@daxiake.com
+2025-05-27T15:34:03.125115 | Debit Note | ABC Corp | 2 | email sent to kenom60459@daxiake.com

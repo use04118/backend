@@ -1,6 +1,8 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager
 from django.contrib.auth.models import PermissionsMixin
+from django.utils import timezone
+from datetime import timedelta
 
 class UserManager(BaseUserManager):
     def create_user(self, mobile, password=None, **extra_fields):
@@ -170,6 +172,7 @@ class Business(models.Model):
     city = models.CharField(max_length=100, blank=True, null=True)
     state = models.CharField(max_length=100, choices=INDIAN_STATES, blank=True, null=True)
     pincode = models.CharField(max_length=10, blank=True, null=True)
+    isGstRegistered = models.BooleanField(default=False)
 
     pan_number = models.CharField(max_length=15, blank=True, null=True)
     gstin = models.CharField(max_length=15, blank=True, null=True)
@@ -200,7 +203,18 @@ class Role(models.Model):
     business = models.ForeignKey(Business, on_delete=models.CASCADE, null=True, blank=True)
     role_name = models.CharField(choices=ROLE_CHOICES, max_length=30)
     permissions = models.JSONField(default=dict)
-    is_removed = models.BooleanField(default=False)  # 👈 NEW
+    is_removed = models.BooleanField(default=False)
+    is_permanently_removed = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('user', 'business')
+        indexes = [
+            models.Index(fields=['user', 'business']),
+            models.Index(fields=['is_removed']),
+            models.Index(fields=['is_permanently_removed']),
+        ]
 
     
     
@@ -218,28 +232,53 @@ class StaffInvite(models.Model):
 
 
 class SubscriptionPlan(models.Model):
-    PLAN_CHOICES = [
-        ('Free Trial', 'Free Trial'),
-        ('Premium Monthly', 'Premium Monthly'),
-        ('Premium Annual', 'Premium Annual'),
-    ]
-    name = models.CharField(max_length=20, choices=PLAN_CHOICES, unique=True)
+    name = models.CharField(max_length=100)
     price = models.DecimalField(max_digits=10, decimal_places=2)
-    duration_days = models.PositiveIntegerField()  # E.g., 30 for monthly
-    features = models.JSONField(default=dict)  # optional for future
+    duration = models.IntegerField(help_text="Duration in days")
+    features = models.JSONField()
+    is_trial = models.BooleanField(default=False)
+    trial_duration = models.IntegerField(default=14, help_text="Trial duration in days")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return self.name
 
+
 class Subscription(models.Model):
-    business = models.OneToOneField('Business', on_delete=models.CASCADE, related_name='subscription')
-    plan = models.ForeignKey(SubscriptionPlan, on_delete=models.SET_NULL, null=True)
+    business = models.ForeignKey('Business', on_delete=models.CASCADE)
+    plan = models.ForeignKey(SubscriptionPlan, on_delete=models.PROTECT)
+    start_date = models.DateTimeField()
+    end_date = models.DateTimeField()
+    is_active = models.BooleanField(default=True)
+    is_trial = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.business.name} - {self.plan.name}"
+
+    def save(self, *args, **kwargs):
+        if not self.start_date:
+            self.start_date = timezone.now()
+        if not self.end_date:
+            self.end_date = self.start_date + timedelta(days=self.plan.duration)
+        super().save(*args, **kwargs)
+
+class TrialSubscription(models.Model):
+    business = models.ForeignKey('Business', on_delete=models.CASCADE)
     start_date = models.DateTimeField(auto_now_add=True)
     end_date = models.DateTimeField()
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
-        return f"{self.business.name} - {self.plan.name}"
+        return f"{self.business.name} - Trial"
+
+    def save(self, *args, **kwargs):
+        if not self.end_date:
+            self.end_date = self.start_date + timedelta(days=14)  # 14 days trial
+        super().save(*args, **kwargs)
 
 class AuditLog(models.Model):
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)

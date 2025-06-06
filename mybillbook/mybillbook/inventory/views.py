@@ -1,6 +1,6 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.response import Response
 from django.db.models import F
 from django.http import JsonResponse
@@ -15,13 +15,25 @@ from users.utils import get_current_business, log_action
 from .permissions import HasItemPermission
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
+from django.views.decorators.csrf import csrf_exempt
+import openpyxl
+from rest_framework.parsers import MultiPartParser
+from django.db import transaction
+from datetime import date
+from users.models import Business
+from godown.models import Godown
+from decimal import Decimal
+
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, HasItemPermission])
 def stock_value(request):
+    business = get_current_business(request.user) 
     # Query all items where itemType is 'Product'
-    items = Item.objects.filter(itemType='Product')
+   
+    items = Item.objects.filter(business=business, itemType='Product')
+
 
     stock_values = []
     total_stock_value = 0  # Initialize the total stock value
@@ -290,3 +302,152 @@ class GSTTaxRateDetailView(generics.RetrieveUpdateDestroyAPIView):
             "description": instance.description
         })
         instance.delete()
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser])
+def bulk_update_items_from_excel(request):
+    user = request.user
+    business = user.current_business
+
+    if not business:
+        return Response({"error": "No active business selected for this user."}, status=status.HTTP_400_BAD_REQUEST)
+
+    file = request.FILES.get("file")
+    if not file:
+        return Response({"error": "No file uploaded"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        wb = openpyxl.load_workbook(file)
+        bulk_sheet = wb["bulk_upload"]
+        ref_sheet = wb["ReferenceData"]
+
+        # Reference mapping
+        reference_data = {
+            "GST Tax Rate ID": {},
+            "Measuring Unit ID": {},
+            "Godown ID": {},
+        }
+
+            # Reference mapping from fixed columns
+        for row in ref_sheet.iter_rows(min_row=2, values_only=True):
+            gst_id, gst_desc, unit_id, unit_name, godown_id, godown_name = row[:6]
+
+            # Map GST
+            if gst_desc and gst_id:
+                reference_data["GST Tax Rate ID"][str(gst_desc).strip()] = gst_id
+
+            # Map Measuring Unit
+            if unit_name and unit_id:
+                reference_data["Measuring Unit ID"][str(unit_name).strip()] = unit_id
+
+            # Map Godown
+            if godown_name and godown_id:
+                reference_data["Godown ID"][str(godown_name).strip()] = godown_id
+        print("GST Ref Map:", reference_data["GST Tax Rate ID"])
+
+
+
+        headers = [cell.value for cell in bulk_sheet[1]]
+
+        created_count = 0
+        stock_updated_count = 0
+        skipped_count = 0
+
+        with transaction.atomic():
+            for row in bulk_sheet.iter_rows(min_row=2, values_only=True):
+                row_data = dict(zip(headers, row))
+                item_code = str(row_data.get("Item Code")).strip() if row_data.get("Item Code") else None
+                item_name = str(row_data.get("Item Name")).strip() if row_data.get("Item Name") else None
+                opening_stock = float(row_data.get("Opening Stock") or 0)
+
+                if not item_code or not item_name:
+                    skipped_count += 1
+                    continue
+
+                existing_item = Item.objects.filter(
+                    business=business,
+                    itemCode=item_code,
+                    itemName__iexact=item_name
+                ).first()
+
+                if existing_item:
+                    existing_item.openingStock += Decimal(str(opening_stock))
+                    existing_item.closingStock = existing_item.openingStock
+                    existing_item.save()
+                    stock_updated_count += 1
+                    continue
+
+                new_item = Item(
+                    business=business,
+                    itemCode=item_code,
+                    itemName=item_name,
+                    openingStock=Decimal(str(opening_stock)),
+                    closingStock=Decimal(str(opening_stock)),
+                    salesPrice=row_data.get("Sales Price") or 0,
+                    purchasePrice=row_data.get("Purchase Price") or 0,
+                    salesPriceType=row_data.get("Sales Price Type") or "With Tax",
+                    purchasePriceType=row_data.get("Purchase Price Type") or "With Tax",
+                    date=row_data.get("Date") or date.today(),
+                    itemBatch=row_data.get("Item Batch"),
+                    hsnCode=row_data.get("HSN Code"),
+                    description=row_data.get("Description"),
+                    lowStockQty=row_data.get("Low Stock Qty") or 0,
+                )
+
+                # Boolean flag
+                low_stock_flag = row_data.get("Enable Low Stock Warning")
+                if isinstance(low_stock_flag, str):
+                    new_item.enableLowStockWarning = low_stock_flag.strip().lower() in ["true", "yes", "1"]
+                elif isinstance(low_stock_flag, bool):
+                    new_item.enableLowStockWarning = low_stock_flag
+                else:
+                    new_item.enableLowStockWarning = False
+
+                # Resolve names to IDs from reference data
+                gst_name = row_data.get("GST Description")
+                if gst_name:
+                    gst_id = reference_data["GST Tax Rate ID"].get(str(gst_name).strip())
+                    if not gst_id:
+                        return Response({"error": f"Invalid GST Description: '{gst_name}'"}, status=status.HTTP_400_BAD_REQUEST)
+                    new_item.gstTaxRate_id = gst_id
+
+                unit_name = row_data.get("Unit")
+                if unit_name:
+                    unit_id = reference_data["Measuring Unit ID"].get(str(unit_name).strip())
+                    if not unit_id:
+                        return Response({"error": f"Invalid Measuring Unit: '{unit_name}'"}, status=status.HTTP_400_BAD_REQUEST)
+                    new_item.measuringUnit_id = unit_id
+
+                godown_name = row_data.get("Godown")
+                if godown_name:
+                    godown_id = reference_data["Godown ID"].get(str(godown_name).strip())
+                    if not godown_id:
+                        return Response({"error": f"Invalid Godown: '{godown_name}'"}, status=status.HTTP_400_BAD_REQUEST)
+                    new_item.godown_id = godown_id
+
+                category_name = str(row_data.get("Category Name")).strip() if row_data.get("Category Name") else None
+                if not category_name:
+                    return Response({"error": f"Category Name is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+                # Try to fetch from DB by name (case-insensitive match)
+                category_obj = ItemCategory.objects.filter(name__iexact=category_name, business=business).first()
+
+                if not category_obj:
+                    # Create new category if it doesn't exist
+                    category_obj = ItemCategory.objects.create(name=category_name, business=business)
+
+                new_item.category = category_obj
+
+                print("new item bulk",new_item)
+
+                new_item.save()
+                created_count += 1
+
+        return Response({
+            "message": f"{stock_updated_count} items updated, {created_count} created, {skipped_count} skipped."
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+

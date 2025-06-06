@@ -23,10 +23,10 @@ urlpatterns = [
     path('gst-tax-rates/', views.GSTTaxRateListCreateView.as_view(), name='gst-tax-rate-list-create'),  # List and Create GST Tax Rates
     path('gst-tax-rates/<int:pk>/', views.GSTTaxRateDetailView.as_view(), name='gst-tax-rate-detail'),  # Retrieve, Update, Delete GST Tax Rate
 
-
     path('stock/stock-value/', views.stock_value, name='stock-value'),
     path('stock/low-stock/', views.low_stock_value, name='low-stock'),
    
+    path('bulk-update/', views.bulk_update_items_from_excel,name='bulk-update'),
 
-    # path('dashboard/', views.dashboard_data, name='item-dashboard'),
+    #path('dashboard/', views.dashboard_data, name='item-dashboard'),
 ]

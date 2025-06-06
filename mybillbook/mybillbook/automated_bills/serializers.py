@@ -144,13 +144,14 @@ class AutomatedInvoiceSerializer(serializers.ModelSerializer):
             invoice_items_data = validated_data.pop('automatedinvoice_items', [])
             validated_data['business'] = business
 
+            validated_data['automated_invoice_no'] = AutomatedInvoice.get_next_automated_invoice_number(business)
             invoice = AutomatedInvoice.objects.create(**validated_data)
 
             for item_data in invoice_items_data:
                 item_data['automatedinvoice'] = invoice
                 AutomatedInvoiceItem.objects.create(**item_data)
 
-            invoice.save()
+            # invoice.save()
 
             # Generate sales invoice
             generate_sales_invoice_from_automated(invoice)

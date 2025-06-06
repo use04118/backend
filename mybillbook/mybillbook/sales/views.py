@@ -20,6 +20,16 @@ from .models import Tcs, Tds
 from .serializers import TcsSerializer, TdsSerializer
 from rest_framework import serializers
 from django.db.models import Q
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from .email_utils import send_invoice_email, send_quotation_email,send_salesreturn_email,send_credit_note_email,send_delivery_challan_email,send_proforma_email,send_payment_in_email
+import tempfile
+import os
+import base64
+from django.core.validators import validate_email
+from datetime import datetime
+from django.utils.timezone import now
+LOG_FILE = 'invoice_open_logs.txt' # You can change the location if needed
 
 # List & Create TCS
 class TcsListCreateView(generics.ListCreateAPIView):
@@ -122,17 +132,28 @@ class TdsDetailView(generics.RetrieveUpdateDestroyAPIView):
         instance.delete()
 
 
-
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def business_tax_flags(request):
     business = get_current_business(request.user)
+    signature = None
+    if business.signature and hasattr(business.signature, 'file'):
+        try:
+            # Read the image file content
+            with business.signature.open('rb') as image_file:
+                signature = base64.b64encode(image_file.read()).decode('utf-8')
+        except Exception as e:
+            print(f"Error processing signature: {str(e)}")
+            signature = None
+    
     return Response({
         "tcs": business.tcs,
         "tds": business.tds,
-        "state":business.state
+        "state": business.state,
+        "signature": signature,
+        "business_name":business.name,
+        "business_phone":business.phone,
     })
-
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, HasSalesPermission])
@@ -516,7 +537,11 @@ class InvoiceListCreateView(generics.ListCreateAPIView):
         next_invoice_no = Invoice.get_next_invoice_number(business)
         # Save the instance with the next invoice number
         instance = serializer.save(business=business, invoice_no=next_invoice_no)
-        log_action(self.request.user, business, "invoice_created", {"invoice_id": instance.id})
+        log_action(self.request.user, business, "invoice_created", {
+            "invoice_id": instance.id,
+            "invoice_number": instance.invoice_no,
+            "amount": float(instance.total_amount) if instance.total_amount else None
+        })
         return instance
 
 
@@ -529,10 +554,18 @@ class InvoiceDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def perform_update(self, serializer):
         instance = serializer.save()
-        log_action(self.request.user, instance.business, "invoice_updated", {"invoice_id": instance.id})
+        log_action(self.request.user, instance.business, "invoice_updated", {
+            "invoice_id": instance.id,
+            "invoice_number": instance.invoice_no,
+            "amount": float(instance.total_amount) if instance.total_amount else None
+        })
 
     def perform_destroy(self, instance):
-        log_action(self.request.user, instance.business, "invoice_deleted", {"invoice_id": instance.id})
+        log_action(self.request.user, instance.business, "invoice_deleted", {
+            "invoice_id": instance.id,
+            "invoice_number": instance.invoice_no,
+            "amount": float(instance.total_amount) if instance.total_amount else None
+        })
         instance.delete()
 
 
@@ -819,3 +852,379 @@ def get_next_proforma_number(request):
     business = get_current_business(request.user)
     next_invoice_number = Proforma.get_next_proforma_number(business)
     return Response({'next_proforma_number': next_invoice_number})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_invoice_email_view(request):
+    try:
+        invoice_no = request.data.get('invoice_no')
+        recipient_email = request.data.get('email')
+        pdf_file = request.FILES.get('pdf_file')
+        business = get_current_business(request.user)
+        
+        # Get the invoice to find the party name
+        try:
+            invoice = Invoice.objects.get(invoice_no=invoice_no, business=business)
+            party_name = invoice.party.party_name
+        except Invoice.DoesNotExist:
+            return Response({'error': 'Invoice not found'}, status=404)
+        
+        if not pdf_file:
+            return Response({'error': 'No PDF file provided'}, status=400)
+        
+        if not recipient_email:
+            return Response({'error': 'No recipient email provided'}, status=400)
+            
+        if not invoice_no:
+            return Response({'error': 'No invoice number provided'}, status=400)
+        
+        # Validate email format
+        try:
+            validate_email(recipient_email)
+        except ValidationError:
+            return Response({'error': 'Invalid email format'}, status=400)
+        
+        # Create a temporary file to store the PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            for chunk in pdf_file.chunks():
+                temp_file.write(chunk)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Send the email with business name and party name
+            send_invoice_email(recipient_email, temp_file_path, invoice_no, invoice.id, business.name, party_name)
+            
+            # Update tracking record
+            from tracking.models import DocumentTracking
+            tracking = DocumentTracking.objects.get(
+                business=business,
+                document_type='Invoice',
+                invoice=invoice
+            )
+            tracking.is_sent = True
+            tracking.sent_at = now()
+            tracking.save()
+            
+            with open(LOG_FILE, 'a') as log_file:
+                log_file.write(f"{datetime.now().isoformat()} | Invoice | {party_name} | {invoice_no} | email sent to {recipient_email}\n")
+            return Response({'message': 'Invoice sent successfully'})
+        
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+                
+    except Exception as e:
+        return Response({'error': str(e)}, status=400)
+    
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_quotation_email_view(request):
+    try:
+        quotation_no = request.data.get('quotation_no')
+        recipient_email = request.data.get('email')
+        pdf_file = request.FILES.get('pdf_file')
+        business = get_current_business(request.user)
+        
+        # Get the invoice to find the party name
+        try:
+            quotation = Quotation.objects.get(quotation_no=quotation_no, business=business)
+            party_name = quotation.party.party_name
+        except Quotation.DoesNotExist:
+            return Response({'error': 'Quotation not found'}, status=404)
+        
+        if not pdf_file:
+            return Response({'error': 'No PDF file provided'}, status=400)
+        
+        if not recipient_email:
+            return Response({'error': 'No recipient email provided'}, status=400)
+            
+        if not quotation_no:
+            return Response({'error': 'No quotation number provided'}, status=400)
+        
+        # Validate email format
+        try:
+            validate_email(recipient_email)
+        except ValidationError:
+            return Response({'error': 'Invalid email format'}, status=400)
+        
+        # Create a temporary file to store the PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            for chunk in pdf_file.chunks():
+                temp_file.write(chunk)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Send the email with business name and party name
+            send_quotation_email(recipient_email, temp_file_path, quotation_no, business.name, party_name)
+            return Response({'message': 'Quotation sent successfully'})
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+                
+    except Exception as e:
+        return Response({'error': str(e)}, status=400)
+    
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_payment_in_email_view(request):
+    try:
+        payment_in_number = request.data.get('payment_in_number')
+        recipient_email = request.data.get('email')
+        pdf_file = request.FILES.get('pdf_file')
+        business = get_current_business(request.user)
+        
+        # Get the invoice to find the party name
+        try:
+            payment_in = PaymentIn.objects.get(payment_in_number=payment_in_number, business=business)
+            party_name = payment_in.party.party_name
+        except PaymentIn.DoesNotExist:
+            return Response({'error': 'Payment out not found'}, status=404)
+        
+        if not pdf_file:
+            return Response({'error': 'No PDF file provided'}, status=400)
+        
+        if not recipient_email:
+            return Response({'error': 'No recipient email provided'}, status=400)
+            
+        if not payment_in_number:
+            return Response({'error': 'No Payment out number provided'}, status=400)
+        
+        # Validate email format
+        try:
+            validate_email(recipient_email)
+        except ValidationError:
+            return Response({'error': 'Invalid email format'}, status=400)
+        
+        # Create a temporary file to store the PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            for chunk in pdf_file.chunks():
+                temp_file.write(chunk)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Send the email with business name and party name
+            send_payment_in_email(recipient_email, temp_file_path, payment_in_number, business.name, party_name)
+            return Response({'message': 'Payment Out sent successfully'})
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+                
+    except Exception as e:
+        return Response({'error': str(e)}, status=400)
+    
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_salesreturn_email_view(request):
+    try:
+        salesreturn_no = request.data.get('salesreturn_no')
+        recipient_email = request.data.get('email')
+        pdf_file = request.FILES.get('pdf_file')
+        business = get_current_business(request.user)
+        
+        # Get the invoice to find the party name
+        try:
+            salesreturn = SalesReturn.objects.get(salesreturn_no=salesreturn_no, business=business)
+            party_name = salesreturn.party.party_name
+        except SalesReturn.DoesNotExist:
+            return Response({'error': 'SalesReturn not found'}, status=404)
+        
+        if not pdf_file:
+            return Response({'error': 'No PDF file provided'}, status=400)
+        
+        if not recipient_email:
+            return Response({'error': 'No recipient email provided'}, status=400)
+            
+        if not salesreturn_no:
+            return Response({'error': 'No salesreturn number provided'}, status=400)
+        
+        # Validate email format
+        try:
+            validate_email(recipient_email)
+        except ValidationError:
+            return Response({'error': 'Invalid email format'}, status=400)
+        
+        # Create a temporary file to store the PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            for chunk in pdf_file.chunks():
+                temp_file.write(chunk)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Send the email with business name and party name
+            send_salesreturn_email(recipient_email, temp_file_path, salesreturn_no, business.name, party_name)
+            return Response({'message': 'SalesReturn sent successfully'})
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+                
+    except Exception as e:
+        return Response({'error': str(e)}, status=400)
+    
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_credit_note_email_view(request):
+    try:
+        credit_note_no = request.data.get('credit_note_no')
+        recipient_email = request.data.get('email')
+        pdf_file = request.FILES.get('pdf_file')
+        business = get_current_business(request.user)
+        
+        # Get the invoice to find the party name
+        try:
+            credit_note = CreditNote.objects.get(credit_note_no=credit_note_no, business=business)
+            party_name = credit_note.party.party_name
+        except CreditNote.DoesNotExist:
+            return Response({'error': 'CreditNote not found'}, status=404)
+        
+        if not pdf_file:
+            return Response({'error': 'No PDF file provided'}, status=400)
+        
+        if not recipient_email:
+            return Response({'error': 'No recipient email provided'}, status=400)
+            
+        if not credit_note_no:
+            return Response({'error': 'No credit_note number provided'}, status=400)
+        
+        # Validate email format
+        try:
+            validate_email(recipient_email)
+        except ValidationError:
+            return Response({'error': 'Invalid email format'}, status=400)
+        
+        # Create a temporary file to store the PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            for chunk in pdf_file.chunks():
+                temp_file.write(chunk)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Send the email with business name and party name
+            send_credit_note_email(recipient_email, temp_file_path, credit_note_no, business.name, party_name)
+            # Update tracking record
+            from tracking.models import DocumentTracking
+            tracking = DocumentTracking.objects.get(
+                business=business,
+                document_type='CreditNote',
+                creditnote=credit_note
+            )
+            tracking.is_sent = True
+            tracking.sent_at = now()
+            tracking.save()
+            
+            with open(LOG_FILE, 'a') as log_file:
+                log_file.write(f"{datetime.now().isoformat()} | Credit Note | {party_name} | {credit_note_no} | email sent to {recipient_email}\n")
+            return Response({'message': 'CreditNote sent successfully'})
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+                
+    except Exception as e:
+        return Response({'error': str(e)}, status=400)
+    
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_deliverychallan_email_view(request):
+    try:
+        delivery_challan_no = request.data.get('delivery_challan_no')
+        recipient_email = request.data.get('email')
+        pdf_file = request.FILES.get('pdf_file')
+        business = get_current_business(request.user)
+        
+        # Get the invoice to find the party name
+        try:
+            delivery_challan = DeliveryChallan.objects.get(delivery_challan_no=delivery_challan_no, business=business)
+            party_name = delivery_challan.party.party_name
+        except DeliveryChallan.DoesNotExist:
+            return Response({'error': 'DeliveryChallan not found'}, status=404)
+        
+        if not pdf_file:
+            return Response({'error': 'No PDF file provided'}, status=400)
+        
+        if not recipient_email:
+            return Response({'error': 'No recipient email provided'}, status=400)
+            
+        if not delivery_challan_no:
+            return Response({'error': 'No deliverychallan number provided'}, status=400)
+        
+        # Validate email format
+        try:
+            validate_email(recipient_email)
+        except ValidationError:
+            return Response({'error': 'Invalid email format'}, status=400)
+        
+        # Create a temporary file to store the PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            for chunk in pdf_file.chunks():
+                temp_file.write(chunk)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Send the email with business name and party name
+            send_delivery_challan_email(recipient_email, temp_file_path, delivery_challan_no, business.name, party_name)
+            return Response({'message': 'DeliveryChallan sent successfully'})
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+                
+    except Exception as e:
+        return Response({'error': str(e)}, status=400)
+    
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_proforma_email_view(request):
+    try:
+        proforma_no = request.data.get('proforma_no')
+        recipient_email = request.data.get('email')
+        pdf_file = request.FILES.get('pdf_file')
+        business = get_current_business(request.user)
+        
+        # Get the invoice to find the party name
+        try:
+            proforma = Proforma.objects.get(proforma_no=proforma_no, business=business)
+            party_name = proforma.party.party_name
+        except Proforma.DoesNotExist:
+            return Response({'error': 'Proforma not found'}, status=404)
+        
+        if not pdf_file:
+            return Response({'error': 'No PDF file provided'}, status=400)
+        
+        if not recipient_email:
+            return Response({'error': 'No recipient email provided'}, status=400)
+            
+        if not proforma_no:
+            return Response({'error': 'No proforma number provided'}, status=400)
+        
+        # Validate email format
+        try:
+            validate_email(recipient_email)
+        except ValidationError:
+            return Response({'error': 'Invalid email format'}, status=400)
+        
+        # Create a temporary file to store the PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            for chunk in pdf_file.chunks():
+                temp_file.write(chunk)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Send the email with business name and party name
+            send_proforma_email(recipient_email, temp_file_path, proforma_no, business.name, party_name)
+            return Response({'message': 'Proforma sent successfully'})
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+                
+    except Exception as e:
+       return Response({'error': str(e)}, status=400)

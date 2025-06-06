@@ -11,7 +11,7 @@ ROLE_PERMISSIONS = {
         "sales.*", "purchase.*", "expenses.*", "stock.*", "items.*",
         "customers.*", "suppliers.*", "reports.*", "settings.*",
         "users.manage", "reminders.*", "sms.marketing",
-        "cashbank.*", "payroll.*", "einvoice.*", "parties.*"
+        "cashbank.*", "payroll.*", "einvoice.*", "parties.*" 
     ],
 
     "accountant": [
@@ -33,7 +33,7 @@ ROLE_PERMISSIONS = {
 
     "delivery_boy": [
         "sales.view", "expenses.create"
-    ]
+    ] 
 }
 
 

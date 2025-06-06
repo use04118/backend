@@ -1,10 +1,12 @@
 from django.urls import path
 from .views import InvoiceListCreateView, InvoiceDetailView, QuotationListCreateView, QuotationDetailView,ProformaDetailView,ProformaListCreateView,SalesReturnListCreateView,SalesReturnDetailView, PaymentInListCreateView,PaymentInDetailView,CreditNoteListCreateView,CreditNoteDetailView,DeliveryChallanListCreateView, DeliveryChallanDetailView,get_paid, get_unpaid, get_next_invoice_number,get_next_quotation_number,get_next_salesreturn_number,get_next_payment_in_number,get_next_creditnote_number,get_next_deliverychallan_number,get_next_proforma_number
-from . import views
+
 from .views import (
     TcsListCreateView, TcsDetailView,
     TdsListCreateView, TdsDetailView,
-    business_tax_flags , settled_invoices
+    business_tax_flags , settled_invoices,
+    convert_quotation_to_invoice, convert_deliverychallan_to_invoice, convert_proforma_to_invoice,
+    send_invoice_email_view,send_quotation_email_view,send_salesreturn_email_view,send_credit_note_email_view, send_deliverychallan_email_view,send_proforma_email_view,send_payment_in_email_view
 )
 
 urlpatterns = [
@@ -14,7 +16,7 @@ urlpatterns = [
     
     path('quotation/', QuotationListCreateView.as_view(), name='quotation-list'),
     path('quotation/<int:pk>/', QuotationDetailView.as_view(), name='quotation-detail'),  # Handles GET, PUT, PATCH, DELETE
-    path('convert-quotation-to-invoice/<int:pk>/', views.convert_quotation_to_invoice, name='convert-quotation-to-invoice'),
+    path('convert-quotation-to-invoice/<int:pk>/', convert_quotation_to_invoice, name='convert-quotation-to-invoice'),
     path('quotation/next-number/', get_next_quotation_number, name='next-quotation-number'),
 
     path('salesreturn/', SalesReturnListCreateView.as_view(), name='salesreturn-list'),
@@ -32,12 +34,12 @@ urlpatterns = [
 
     path('deliverychallan/', DeliveryChallanListCreateView.as_view(), name='deliverychallan-list'),
     path('deliverychallan/<int:pk>/', DeliveryChallanDetailView.as_view(), name='deliverychallan-detail'),  # Handles GET, PUT, PATCH, DELETE
-    path('convert-deliverychallan-to-invoice/<int:pk>/', views.convert_deliverychallan_to_invoice, name='convert-deliverychallan-to-invoicedeliverychallan'),
+    path('convert-deliverychallan-to-invoice/<int:pk>/', convert_deliverychallan_to_invoice, name='convert-deliverychallan-to-invoice'),
     path('deliverychallan/next-number/', get_next_deliverychallan_number, name='next-deliverychallan-number'),
 
     path('proforma/', ProformaListCreateView.as_view(), name='proforma-list'),
     path('proforma/<int:pk>/', ProformaDetailView.as_view(), name='proforma-detail'),  # Handles GET, PUT, PATCH, DELETE
-    path('convert-proforma-to-invoice/<int:pk>/', views.convert_proforma_to_invoice, name='convert-proforma-to-invoice'),
+    path('convert-proforma-to-invoice/<int:pk>/', convert_proforma_to_invoice, name='convert-proforma-to-invoice'),
     path('proforma/next-number/', get_next_proforma_number, name='next-proforma-number'),
 
     path('invoice/paid/', get_paid, name='get-paid'),
@@ -53,4 +55,13 @@ urlpatterns = [
 
     # Current Business TCS/TDS Config (For Frontend)
     path('settings/tcs-tds/',business_tax_flags , name='business-tcs-tds-settings'),
+
+    # Send Invoice Email
+    path('send-invoice-email/', send_invoice_email_view, name='send-invoice-email'),
+    path('send-quotation-email/', send_quotation_email_view, name='send-quotation-email'),
+    path('send-payment-in-email/', send_payment_in_email_view, name='send_payment_in_email'),
+    path('send-salesreturn-email/', send_salesreturn_email_view, name='send-salesreturn-email'),
+    path('send-credit_note-email/', send_credit_note_email_view, name='send-credit_note-email'),
+    path('send-delivery_challan-email/', send_deliverychallan_email_view, name='send-delivery_challan-email'),
+    path('send-proforma-email/', send_proforma_email_view, name='send-proforma-email'),
 ]
