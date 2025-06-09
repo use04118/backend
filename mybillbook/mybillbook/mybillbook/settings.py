@@ -12,9 +12,20 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
 from pathlib import Path
+import environ
+import os
+import dj_database_url
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+# Initialize environment variables
+env = environ.Env()
+environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
+
+
 
 
 # Quick-start development settings - unsuitable for production
@@ -26,7 +37,7 @@ SECRET_KEY = 'django-insecure-r6x2zy+0^n%88f!*c$3c)o@)-zr$(958+qj^yf&cksm!z%gljd
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['192.168.1.34','192.168.1.41','192.168.1.40', '192.168.1.3', '192.168.1.35','192.168.1.43', 'localhost', '127.0.0.1','testserver','backend-3-2y61.onrender.com']
+ALLOWED_HOSTS = ['192.168.1.34','192.168.1.36','192.168.1.40', '192.168.1.3', '192.168.1.35','192.168.1.43', 'localhost', '127.0.0.1','testserver','backend-3-2y61.onrender.com']
 
 
 
@@ -105,15 +116,23 @@ WSGI_APPLICATION = 'mybillbook.wsgi.application'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-        # 'USER': 'root',
-        # 'PASSWORD': 'root',
-        # 'HOST': '127.0.0.1',
-        # 'PORT': '3306',
-    }
+    'default': dj_database_url.config(
+        default=env('DATABASE_URL'),
+        conn_max_age=600,
+        ssl_require=True
+    )
 }
+
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#         # 'USER': 'root',
+#         # 'PASSWORD': 'root',
+#         # 'HOST': '127.0.0.1',
+#         # 'PORT': '3306',
+#     }
+# }
 
 
 # Password validation
@@ -187,7 +206,7 @@ GSTIN_API_KEY="404eed6c5cc83932e7f701f2bfecc54a"
 CORS_ALLOW_ALL_ORIGINS = True
 
 CORS_ALLOWED_ORIGINS = [
-    "http://192.168.1.3:5173",  # React app
+    "http://192.168.1.36:5173",  # React app
     "http://192.168.1.41:5173",  # React app
     "https://stupendous-kleicha-92b259.netlify.app",
 ]
@@ -208,7 +227,7 @@ SIMPLE_JWT = {
 
 CORS_ALLOW_CREDENTIALS = True  # Allow credentials in requests
 CSRF_TRUSTED_ORIGINS = [
-    "http://192.168.1.3:5173",
+    "http://192.168.1.36:5173",
     "http://192.168.1.41:5173",
     "https://stupendous-kleicha-92b259.netlify.app",
 ]
